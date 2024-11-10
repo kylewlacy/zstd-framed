@@ -284,8 +284,6 @@ impl ZstdSeekTableWriter {
 
             match self.state {
                 ZstdSeekTableWriterState::PrepareHeader => {
-                    let magic_bytes = 0x184D2A5E_u32.to_le_bytes();
-
                     let entry_size = 8;
                     let frame_size = table.num_frames().checked_mul(entry_size);
                     let frame_size = frame_size.and_then(|frame_size| frame_size.checked_add(9));
@@ -294,7 +292,10 @@ impl ZstdSeekTableWriter {
                     let frame_size = frame_size.expect("failed to convert frame size to u32");
                     let frame_size_bytes = frame_size.to_le_bytes();
 
-                    crate::buffer::write_all_to_buffer(&mut self.buffer, &magic_bytes[..]);
+                    crate::buffer::write_all_to_buffer(
+                        &mut self.buffer,
+                        &crate::SKIPPABLE_HEADER_MAGIC_BYTES[..],
+                    );
                     crate::buffer::write_all_to_buffer(&mut self.buffer, &frame_size_bytes[..]);
 
                     self.state = ZstdSeekTableWriterState::WritingHeader;
@@ -350,13 +351,12 @@ impl ZstdSeekTableWriter {
                         .expect("failed to convert number of frames to u32");
                     let num_frames_bytes = num_frames.to_le_bytes();
                     let seek_table_descriptor = 0u8;
-                    let seekable_magic_number_bytes = 0x8F92EAB1_u32.to_le_bytes();
 
                     crate::buffer::write_all_to_buffer(&mut self.buffer, &num_frames_bytes[..]);
                     crate::buffer::write_all_to_buffer(&mut self.buffer, &[seek_table_descriptor]);
                     crate::buffer::write_all_to_buffer(
                         &mut self.buffer,
-                        &seekable_magic_number_bytes[..],
+                        &crate::SEEKABLE_FOOTER_MAGIC_BYTES[..],
                     );
 
                     self.state = ZstdSeekTableWriterState::WritingFooter;

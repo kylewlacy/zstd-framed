@@ -23,8 +23,7 @@ where
     reader.read_exact(&mut seekable_magic_number_bytes).await?;
 
     // Return if the magic number doesn't match
-    let seekable_magic_number = u32::from_le_bytes(seekable_magic_number_bytes);
-    if seekable_magic_number != 0x8F92EAB1 {
+    if seekable_magic_number_bytes != crate::SEEKABLE_FOOTER_MAGIC_BYTES {
         return Ok(None);
     }
 
@@ -69,8 +68,7 @@ where
         .await?;
 
     // Validate the skippable frame magic number and frame size
-    let skippable_magic_number = u32::from_le_bytes(skippable_magic_number_bytes);
-    if skippable_magic_number != 0x184D2A5E {
+    if skippable_magic_number_bytes != crate::SKIPPABLE_HEADER_MAGIC_BYTES {
         return Err(std::io::Error::other(
             "zstd seek table has unsupported skippable frame magic number",
         ));

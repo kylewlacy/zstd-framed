@@ -17,11 +17,11 @@ pub struct ZstdFramedEncoder<'dict> {
 impl<'dict> ZstdFramedEncoder<'dict> {
     pub fn new(
         encoder: zstd::stream::raw::Encoder<'dict>,
-        seekable_table_config: Option<ZstdFramedEncoderSeekableTableConfig>,
+        seek_table_config: Option<ZstdFramedEncoderSeekTableConfig>,
     ) -> Self {
         let write_table;
         let max_frame_size;
-        match seekable_table_config {
+        match seek_table_config {
             Some(config) => {
                 write_table = true;
                 max_frame_size = Some(config.max_frame_size);
@@ -237,7 +237,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
                 ZstdFramedEncoderState::FinishedFrame { .. } => {
                     if self.write_table {
                         self.state =
-                            ZstdFramedEncoderState::WritingTable(ZstdSeekableTableWriter::new());
+                            ZstdFramedEncoderState::WritingTable(ZstdSeekTableWriter::new());
                     } else {
                         return Ok(ZstdOutcome::Complete(()));
                     }
@@ -250,7 +250,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
     }
 }
 
-pub(crate) struct ZstdFramedEncoderSeekableTableConfig {
+pub(crate) struct ZstdFramedEncoderSeekTableConfig {
     pub(crate) max_frame_size: u32,
 }
 
@@ -258,18 +258,18 @@ enum ZstdFramedEncoderState {
     Encoding { current_frame: ZstdFrame },
     FinishingFrame { current_frame: ZstdFrame },
     FinishedFrame { finished_frame: ZstdFrame },
-    WritingTable(ZstdSeekableTableWriter),
+    WritingTable(ZstdSeekTableWriter),
 }
 
-struct ZstdSeekableTableWriter {
+struct ZstdSeekTableWriter {
     buffer: crate::buffer::FixedBuffer<[u8; 12]>,
-    state: ZstdSeekableTableWriterState,
+    state: ZstdSeekTableWriterState,
 }
 
-impl ZstdSeekableTableWriter {
+impl ZstdSeekTableWriter {
     fn new() -> Self {
         Self {
-            state: ZstdSeekableTableWriterState::PrepareHeader,
+            state: ZstdSeekTableWriterState::PrepareHeader,
             buffer: crate::buffer::FixedBuffer::new([0; 12]),
         }
     }
@@ -283,7 +283,7 @@ impl ZstdSeekableTableWriter {
             complete_ok!(crate::buffer::move_buffer(&mut self.buffer, buffer));
 
             match self.state {
-                ZstdSeekableTableWriterState::PrepareHeader => {
+                ZstdSeekTableWriterState::PrepareHeader => {
                     let magic_bytes = 0x184D2A5E_u32.to_le_bytes();
 
                     let entry_size = 8;
@@ -297,13 +297,12 @@ impl ZstdSeekableTableWriter {
                     crate::buffer::write_all_to_buffer(&mut self.buffer, &magic_bytes[..]);
                     crate::buffer::write_all_to_buffer(&mut self.buffer, &frame_size_bytes[..]);
 
-                    self.state = ZstdSeekableTableWriterState::WritingHeader;
+                    self.state = ZstdSeekTableWriterState::WritingHeader;
                 }
-                ZstdSeekableTableWriterState::WritingHeader => {
-                    self.state =
-                        ZstdSeekableTableWriterState::PreparingNextFrame { num_written: 0 };
+                ZstdSeekTableWriterState::WritingHeader => {
+                    self.state = ZstdSeekTableWriterState::PreparingNextFrame { num_written: 0 };
                 }
-                ZstdSeekableTableWriterState::PreparingNextFrame { num_written } => {
+                ZstdSeekTableWriterState::PreparingNextFrame { num_written } => {
                     let frame = table.get(num_written);
                     match frame {
                         Some(frame) => {
@@ -330,21 +329,21 @@ impl ZstdSeekableTableWriter {
                                 &decompressed_size_bytes[..],
                             );
 
-                            self.state = ZstdSeekableTableWriterState::WritingFrame {
+                            self.state = ZstdSeekTableWriterState::WritingFrame {
                                 frame_index: num_written,
                             };
                         }
                         None => {
-                            self.state = ZstdSeekableTableWriterState::PreparingFooter;
+                            self.state = ZstdSeekTableWriterState::PreparingFooter;
                         }
                     }
                 }
-                ZstdSeekableTableWriterState::WritingFrame { frame_index } => {
-                    self.state = ZstdSeekableTableWriterState::PreparingNextFrame {
+                ZstdSeekTableWriterState::WritingFrame { frame_index } => {
+                    self.state = ZstdSeekTableWriterState::PreparingNextFrame {
                         num_written: frame_index + 1,
                     };
                 }
-                ZstdSeekableTableWriterState::PreparingFooter => {
+                ZstdSeekTableWriterState::PreparingFooter => {
                     let num_frames: u32 = table
                         .num_frames()
                         .try_into()
@@ -360,19 +359,19 @@ impl ZstdSeekableTableWriter {
                         &seekable_magic_number_bytes[..],
                     );
 
-                    self.state = ZstdSeekableTableWriterState::WritingFooter;
+                    self.state = ZstdSeekTableWriterState::WritingFooter;
                 }
-                ZstdSeekableTableWriterState::WritingFooter => {
-                    self.state = ZstdSeekableTableWriterState::Complete;
+                ZstdSeekTableWriterState::WritingFooter => {
+                    self.state = ZstdSeekTableWriterState::Complete;
                 }
-                ZstdSeekableTableWriterState::Complete => return Ok(ZstdOutcome::Complete(())),
+                ZstdSeekTableWriterState::Complete => return Ok(ZstdOutcome::Complete(())),
             }
         }
     }
 }
 
 #[derive(Debug)]
-enum ZstdSeekableTableWriterState {
+enum ZstdSeekTableWriterState {
     PrepareHeader,
     WritingHeader,
     PreparingNextFrame { num_written: usize },

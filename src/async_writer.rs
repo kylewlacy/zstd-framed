@@ -1,4 +1,4 @@
-use crate::encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekableTableConfig};
+use crate::encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekTableConfig};
 
 pin_project_lite::pin_project! {
     pub struct AsyncZstdWriter<'dict, W> {
@@ -238,7 +238,7 @@ where
 pub struct ZstdWriterBuilder<W> {
     writer: W,
     compression_level: i32,
-    seekable_table_config: Option<ZstdFramedEncoderSeekableTableConfig>,
+    seek_table_config: Option<ZstdFramedEncoderSeekTableConfig>,
 }
 
 impl<W> ZstdWriterBuilder<W> {
@@ -246,7 +246,7 @@ impl<W> ZstdWriterBuilder<W> {
         Self {
             writer,
             compression_level: 0,
-            seekable_table_config: None,
+            seek_table_config: None,
         }
     }
 
@@ -255,10 +255,10 @@ impl<W> ZstdWriterBuilder<W> {
         self
     }
 
-    pub fn with_seekable_table(mut self, max_frame_size: u32) -> Self {
+    pub fn with_seek_table(mut self, max_frame_size: u32) -> Self {
         assert!(max_frame_size > 0, "max frame size must be greater than 0");
 
-        self.seekable_table_config = Some(ZstdFramedEncoderSeekableTableConfig { max_frame_size });
+        self.seek_table_config = Some(ZstdFramedEncoderSeekTableConfig { max_frame_size });
         self
     }
 
@@ -268,7 +268,7 @@ impl<W> ZstdWriterBuilder<W> {
     {
         let zstd_encoder = zstd::stream::raw::Encoder::new(self.compression_level)?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
-        let encoder = ZstdFramedEncoder::new(zstd_encoder, self.seekable_table_config);
+        let encoder = ZstdFramedEncoder::new(zstd_encoder, self.seek_table_config);
 
         Ok(AsyncZstdWriter {
             writer: self.writer,

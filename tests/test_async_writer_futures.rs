@@ -23,7 +23,7 @@ proptest! {
 
                 let mut writer = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
                 if let Some(frame_size) = frame_size {
-                    writer = writer.with_seekable_table(frame_size);
+                    writer = writer.with_seek_table(frame_size);
                 }
                 let mut writer = writer.build().unwrap();
 
@@ -53,7 +53,7 @@ proptest! {
 
                 let mut writer = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
                 if let Some(frame_size) = frame_size {
-                    writer = writer.with_seekable_table(frame_size);
+                    writer = writer.with_seek_table(frame_size);
                 }
                 let mut writer = writer.build().unwrap();
 
@@ -81,7 +81,7 @@ proptest! {
 
             let mut writer = AsyncZstdWriter::builder(&mut encoded)
                 .with_compression_level(level)
-                .with_seekable_table(frame_size)
+                .with_seek_table(frame_size)
                 .build()
                 .unwrap();
 
@@ -108,7 +108,7 @@ proptest! {
 
             let mut writer = AsyncZstdWriter::builder(&mut encoded)
                 .with_compression_level(level)
-                .with_seekable_table(u32::MAX)
+                .with_seek_table(u32::MAX)
                 .build()
                 .unwrap();
 

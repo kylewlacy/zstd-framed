@@ -225,7 +225,11 @@ proptest! {
                 .unwrap();
 
             let (reader, watcher_actions) = test_utils::ReaderWatcher::new(futures::io::Cursor::new(&encoded[..]));
-            let mut decoder = AsyncZstdReader::builder_futures(reader).with_table(table).build().unwrap().seekable();
+            let mut decoder = AsyncZstdReader::builder_futures(reader)
+                .with_seek_table(table)
+                .build()
+                .unwrap()
+                .seekable();
 
             let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).await.unwrap();
             assert_eq!(seeked_pos, pos as u64);

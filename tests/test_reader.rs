@@ -203,7 +203,7 @@ proptest! {
             .unwrap();
 
         let (reader, watcher_actions) = test_utils::ReaderWatcher::new(std::io::Cursor::new(&encoded[..]));
-        let mut decoder = ZstdReader::builder(reader).with_table(table).build().unwrap();
+        let mut decoder = ZstdReader::builder(reader).with_seek_table(table).build().unwrap();
 
         let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).unwrap();
         assert_eq!(seeked_pos, pos as u64);

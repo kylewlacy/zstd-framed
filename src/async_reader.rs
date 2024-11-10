@@ -1052,7 +1052,7 @@ impl<R> ZstdReaderBuilder<R> {
         }
     }
 
-    pub fn with_table(mut self, table: ZstdFrameTable) -> Self {
+    pub fn with_seek_table(mut self, table: ZstdFrameTable) -> Self {
         self.table = table;
         self
     }

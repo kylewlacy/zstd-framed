@@ -5,7 +5,7 @@ use easy_hex::Hex;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 use tokio::io::AsyncWriteExt as _;
-use zstd_framed::{async_writer::AsyncZstdWriter, frames::tokio::read_seek_table};
+use zstd_framed::{async_writer::AsyncZstdWriter, table::tokio::read_seek_table};
 
 mod test_utils;
 

@@ -1,6 +1,6 @@
 use crate::{
     decoder::ZstdFramedDecoder,
-    frames::{ZstdFrame, ZstdFrameTable},
+    table::{ZstdFrame, ZstdFrameTable},
 };
 
 pin_project_lite::pin_project! {

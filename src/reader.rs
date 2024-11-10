@@ -1,6 +1,6 @@
 use std::io::BufRead as _;
 
-use crate::{buffer::Buffer, decoder::ZstdFramedDecoder, frames::ZstdFrameTable};
+use crate::{buffer::Buffer, decoder::ZstdFramedDecoder, table::ZstdFrameTable};
 
 pub struct ZstdReader<'dict, R> {
     reader: R,

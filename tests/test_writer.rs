@@ -4,7 +4,7 @@ use assert_matches::assert_matches;
 use easy_hex::Hex;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
-use zstd_framed::{frames::read_seek_table, writer::ZstdWriter};
+use zstd_framed::{table::read_seek_table, writer::ZstdWriter};
 
 mod test_utils;
 

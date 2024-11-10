@@ -4,7 +4,7 @@ use easy_hex::Hex;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 use test_utils::ReaderAction;
-use zstd_framed::{frames::read_seek_table, reader::ZstdReader, writer::ZstdWriter};
+use zstd_framed::{reader::ZstdReader, table::read_seek_table, writer::ZstdWriter};
 
 mod test_utils;
 

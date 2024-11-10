@@ -6,8 +6,8 @@ pub mod async_writer;
 mod buffer;
 mod decoder;
 mod encoder;
-pub mod frames;
 pub mod reader;
+pub mod table;
 pub mod writer;
 
 #[derive(Debug, Clone, Copy)]

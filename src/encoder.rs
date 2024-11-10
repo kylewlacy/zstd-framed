@@ -2,7 +2,7 @@ use zstd::stream::raw::Operation as _;
 
 use crate::{
     buffer::Buffer,
-    frames::{ZstdFrame, ZstdFrameSize, ZstdFrameTable},
+    table::{ZstdFrame, ZstdFrameSize, ZstdFrameTable},
     ZstdOutcome,
 };
 

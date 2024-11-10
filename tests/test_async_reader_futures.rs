@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 use test_utils::ReaderAction;
 use zstd_framed::{
-    async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter, frames::futures::read_seek_table,
+    async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter, table::futures::read_seek_table,
 };
 
 mod test_utils;

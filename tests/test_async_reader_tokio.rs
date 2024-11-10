@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use test_utils::ReaderAction;
 use tokio::io::{AsyncReadExt as _, AsyncSeek as _, AsyncSeekExt as _, AsyncWriteExt as _};
 use zstd_framed::{
-    async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter, frames::tokio::read_seek_table,
+    async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter, table::tokio::read_seek_table,
 };
 
 mod test_utils;

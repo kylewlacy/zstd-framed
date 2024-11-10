@@ -5,7 +5,7 @@ use easy_hex::Hex;
 use futures::AsyncWriteExt as _;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
-use zstd_framed::{async_writer::AsyncZstdWriter, frames::futures::read_seek_table};
+use zstd_framed::{async_writer::AsyncZstdWriter, table::futures::read_seek_table};
 
 mod test_utils;
 

@@ -16,7 +16,7 @@ proptest! {
     ) {
         let encoded = zstd::encode_all(&data[..], level).unwrap();
 
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut decoder = AsyncZstdReader::builder_futures(&encoded[..]).build().unwrap();
             let mut decoded = vec![];
             decoder.read_to_end(&mut decoded).await.unwrap();
@@ -31,7 +31,7 @@ proptest! {
         level in test_utils::arb_zstd_level(),
         frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
@@ -56,7 +56,7 @@ proptest! {
         frames in test_utils::arb_data_framed(),
         level in test_utils::arb_zstd_level(),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
             let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level).build().unwrap();
             for frame in &frames {
@@ -81,7 +81,7 @@ proptest! {
         level in test_utils::arb_zstd_level(),
         frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
@@ -108,7 +108,7 @@ proptest! {
         level in test_utils::arb_zstd_level(),
         frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
@@ -136,7 +136,7 @@ proptest! {
         frame_size in prop::option::of(test_utils::arb_frame_size()),
         seek_type in test_utils::arb_seek_type(),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);

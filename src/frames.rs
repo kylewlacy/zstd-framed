@@ -8,6 +8,10 @@ impl ZstdFrameTable {
         Self { frames: vec![] }
     }
 
+    pub fn num_frames(&self) -> usize {
+        self.frames.len()
+    }
+
     pub(crate) fn first_frame(&self) -> Option<ZstdFrame> {
         self.frames.first().copied()
     }
@@ -31,6 +35,10 @@ impl ZstdFrameTable {
             .ok()?;
         let frame = self.frames[index];
         Some(frame)
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<ZstdFrame> {
+        self.frames.get(index).copied()
     }
 
     pub(crate) fn insert(&mut self, frame: ZstdFrame) {

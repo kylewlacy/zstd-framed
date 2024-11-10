@@ -1,6 +1,10 @@
 use std::io::Write as _;
 
-use crate::{buffer::Buffer as _, encoder::ZstdFramedEncoder, ZstdOutcome};
+use crate::{
+    buffer::Buffer as _,
+    encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekableTableConfig},
+    ZstdOutcome,
+};
 
 pub struct ZstdWriter<'dict, W>
 where
@@ -15,12 +19,15 @@ impl<'dict, W> ZstdWriter<'dict, W>
 where
     W: std::io::Write,
 {
-    pub fn new(writer: W, level: i32, frame_size: u32) -> std::io::Result<Self> {
-        assert!(frame_size > 0, "frame size must be greater than 0");
+    pub fn new(writer: W, level: i32, max_frame_size: u32) -> std::io::Result<Self> {
+        assert!(max_frame_size > 0, "max frame size must be greater than 0");
 
         let zstd_encoder = zstd::stream::raw::Encoder::new(level)?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
-        let encoder = ZstdFramedEncoder::new(zstd_encoder, frame_size);
+        let encoder = ZstdFramedEncoder::new(
+            zstd_encoder,
+            Some(ZstdFramedEncoderSeekableTableConfig { max_frame_size }),
+        );
         Ok(Self {
             writer,
             encoder,

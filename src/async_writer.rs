@@ -1,4 +1,4 @@
-use crate::encoder::ZstdFramedEncoder;
+use crate::encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekableTableConfig};
 
 pin_project_lite::pin_project! {
     pub struct AsyncZstdWriter<'dict, W> {
@@ -10,12 +10,15 @@ pin_project_lite::pin_project! {
 }
 
 impl<'dict, W> AsyncZstdWriter<'dict, W> {
-    pub fn new(writer: W, level: i32, frame_size: u32) -> std::io::Result<Self> {
-        assert!(frame_size > 0, "frame size must be greater than 0");
+    pub fn new(writer: W, level: i32, max_frame_size: u32) -> std::io::Result<Self> {
+        assert!(max_frame_size > 0, "max frame size must be greater than 0");
 
         let zstd_encoder = zstd::stream::raw::Encoder::new(level)?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
-        let encoder = ZstdFramedEncoder::new(zstd_encoder, frame_size);
+        let encoder = ZstdFramedEncoder::new(
+            zstd_encoder,
+            Some(ZstdFramedEncoderSeekableTableConfig { max_frame_size }),
+        );
         Ok(Self {
             writer,
             encoder,

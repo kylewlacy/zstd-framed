@@ -6,7 +6,7 @@ pub struct ZstdFramedEncoder<'dict> {
     encoder: zstd::stream::raw::Encoder<'dict>,
     frame_size: u32,
     finished_frames: Vec<ZstdFrameSize>,
-    state: ZstdSeekableEncoderState,
+    state: ZstdFramedEncoderState,
 }
 
 impl<'dict> ZstdFramedEncoder<'dict> {
@@ -15,7 +15,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
             encoder,
             frame_size,
             finished_frames: vec![],
-            state: ZstdSeekableEncoderState::Encoding {
+            state: ZstdFramedEncoderState::Encoding {
                 current_frame: ZstdFrameSize::default(),
             },
         }
@@ -26,16 +26,16 @@ impl<'dict> ZstdFramedEncoder<'dict> {
         buffer: &mut impl Buffer,
     ) -> std::io::Result<ZstdOutcome<ZstdFrameSize>> {
         match self.state {
-            ZstdSeekableEncoderState::Encoding { current_frame } => {
+            ZstdFramedEncoderState::Encoding { current_frame } => {
                 Ok(ZstdOutcome::Complete(current_frame))
             }
-            ZstdSeekableEncoderState::FinishingFrame { mut current_frame } => {
+            ZstdFramedEncoderState::FinishingFrame { mut current_frame } => {
                 let (result, written) = crate::buffer::with_zstd_out_buffer(buffer, |out_buffer| {
                     self.encoder.finish(out_buffer, false)
                 });
 
                 current_frame.add_sizes(written, 0);
-                self.state = ZstdSeekableEncoderState::FinishingFrame { current_frame };
+                self.state = ZstdFramedEncoderState::FinishingFrame { current_frame };
 
                 let hint = result?;
 
@@ -45,7 +45,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
                     self.finished_frames.push(current_frame);
 
                     let current_frame = ZstdFrameSize::default();
-                    self.state = ZstdSeekableEncoderState::Encoding { current_frame };
+                    self.state = ZstdFramedEncoderState::Encoding { current_frame };
                     Ok(ZstdOutcome::Complete(current_frame))
                 } else {
                     Ok(ZstdOutcome::HasMore {
@@ -53,13 +53,13 @@ impl<'dict> ZstdFramedEncoder<'dict> {
                     })
                 }
             }
-            ZstdSeekableEncoderState::FinishedFrame => {
+            ZstdFramedEncoderState::FinishedFrame => {
                 self.encoder.reinit()?;
                 let current_frame = ZstdFrameSize::default();
-                self.state = ZstdSeekableEncoderState::Encoding { current_frame };
+                self.state = ZstdFramedEncoderState::Encoding { current_frame };
                 Ok(ZstdOutcome::Complete(current_frame))
             }
-            ZstdSeekableEncoderState::WritingTable(_) => {
+            ZstdFramedEncoderState::WritingTable(_) => {
                 panic!("called .prepare_frame() but encoder is writing table")
             }
         }
@@ -67,27 +67,27 @@ impl<'dict> ZstdFramedEncoder<'dict> {
 
     pub fn finish_frame(&mut self, buffer: &mut impl Buffer) -> std::io::Result<ZstdOutcome<()>> {
         match self.state {
-            ZstdSeekableEncoderState::Encoding { mut current_frame }
-            | ZstdSeekableEncoderState::FinishingFrame { mut current_frame } => {
-                self.state = ZstdSeekableEncoderState::FinishingFrame { current_frame };
+            ZstdFramedEncoderState::Encoding { mut current_frame }
+            | ZstdFramedEncoderState::FinishingFrame { mut current_frame } => {
+                self.state = ZstdFramedEncoderState::FinishingFrame { current_frame };
 
                 let (result, written) = crate::buffer::with_zstd_out_buffer(buffer, |out_buffer| {
                     self.encoder.finish(out_buffer, false)
                 });
 
                 current_frame.add_sizes(written, 0);
-                self.state = ZstdSeekableEncoderState::FinishingFrame { current_frame };
+                self.state = ZstdFramedEncoderState::FinishingFrame { current_frame };
 
                 let remaining_bytes = result?;
                 if remaining_bytes == 0 {
                     self.finished_frames.push(current_frame);
-                    self.state = ZstdSeekableEncoderState::FinishedFrame;
+                    self.state = ZstdFramedEncoderState::FinishedFrame;
                     Ok(ZstdOutcome::Complete(()))
                 } else {
                     Ok(ZstdOutcome::HasMore { remaining_bytes })
                 }
             }
-            ZstdSeekableEncoderState::FinishedFrame | ZstdSeekableEncoderState::WritingTable(_) => {
+            ZstdFramedEncoderState::FinishedFrame | ZstdFramedEncoderState::WritingTable(_) => {
                 Ok(ZstdOutcome::Complete(()))
             }
         }
@@ -98,7 +98,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
         data: &[u8],
         buffer: &mut impl Buffer,
     ) -> std::io::Result<ZstdOutcome<usize>> {
-        if let ZstdSeekableEncoderState::WritingTable(_) = &self.state {
+        if let ZstdFramedEncoderState::WritingTable(_) = &self.state {
             return Ok(ZstdOutcome::Complete(0));
         }
 
@@ -124,11 +124,11 @@ impl<'dict> ZstdFramedEncoder<'dict> {
         });
 
         current_frame.add_sizes(written, in_buffer.pos());
-        self.state = ZstdSeekableEncoderState::Encoding { current_frame };
+        self.state = ZstdFramedEncoderState::Encoding { current_frame };
 
         let hint = result?;
         if hint == 0 {
-            self.state = ZstdSeekableEncoderState::FinishedFrame;
+            self.state = ZstdFramedEncoderState::FinishedFrame;
         }
 
         Ok(ZstdOutcome::Complete(in_buffer.pos()))
@@ -136,13 +136,13 @@ impl<'dict> ZstdFramedEncoder<'dict> {
 
     pub fn flush(&mut self, buffer: &mut impl Buffer) -> std::io::Result<ZstdOutcome<()>> {
         match self.state {
-            ZstdSeekableEncoderState::Encoding { mut current_frame } => {
+            ZstdFramedEncoderState::Encoding { mut current_frame } => {
                 let (result, written) = crate::buffer::with_zstd_out_buffer(buffer, |out_buffer| {
                     self.encoder.flush(out_buffer)
                 });
 
                 current_frame.add_sizes(written, 0);
-                self.state = ZstdSeekableEncoderState::Encoding { current_frame };
+                self.state = ZstdFramedEncoderState::Encoding { current_frame };
 
                 let hint = result?;
                 if hint == 0 {
@@ -153,18 +153,18 @@ impl<'dict> ZstdFramedEncoder<'dict> {
                     })
                 }
             }
-            ZstdSeekableEncoderState::FinishingFrame { mut current_frame } => {
+            ZstdFramedEncoderState::FinishingFrame { mut current_frame } => {
                 let (result, written) = crate::buffer::with_zstd_out_buffer(buffer, |out_buffer| {
                     self.encoder.finish(out_buffer, false)
                 });
 
                 current_frame.add_sizes(written, 0);
-                self.state = ZstdSeekableEncoderState::FinishingFrame { current_frame };
+                self.state = ZstdFramedEncoderState::FinishingFrame { current_frame };
 
                 let hint = result?;
                 if hint == 0 {
                     self.finished_frames.push(current_frame);
-                    self.state = ZstdSeekableEncoderState::FinishedFrame;
+                    self.state = ZstdFramedEncoderState::FinishedFrame;
                     Ok(ZstdOutcome::Complete(()))
                 } else {
                     Ok(ZstdOutcome::HasMore {
@@ -172,8 +172,8 @@ impl<'dict> ZstdFramedEncoder<'dict> {
                     })
                 }
             }
-            ZstdSeekableEncoderState::FinishedFrame => Ok(ZstdOutcome::Complete(())),
-            ZstdSeekableEncoderState::WritingTable(ref mut writer) => {
+            ZstdFramedEncoderState::FinishedFrame => Ok(ZstdOutcome::Complete(())),
+            ZstdFramedEncoderState::WritingTable(ref mut writer) => {
                 writer.write_table(&self.finished_frames, buffer)
             }
         }
@@ -182,15 +182,15 @@ impl<'dict> ZstdFramedEncoder<'dict> {
     pub fn shutdown(&mut self, buffer: &mut impl Buffer) -> std::io::Result<ZstdOutcome<()>> {
         let writer = loop {
             match self.state {
-                ZstdSeekableEncoderState::Encoding { .. }
-                | ZstdSeekableEncoderState::FinishingFrame { .. } => {
+                ZstdFramedEncoderState::Encoding { .. }
+                | ZstdFramedEncoderState::FinishingFrame { .. } => {
                     complete_ok!(self.finish_frame(buffer)?);
                 }
-                ZstdSeekableEncoderState::FinishedFrame => {
+                ZstdFramedEncoderState::FinishedFrame => {
                     self.state =
-                        ZstdSeekableEncoderState::WritingTable(ZstdSeekableTableWriter::new());
+                        ZstdFramedEncoderState::WritingTable(ZstdSeekableTableWriter::new());
                 }
-                ZstdSeekableEncoderState::WritingTable(ref mut writer) => break writer,
+                ZstdFramedEncoderState::WritingTable(ref mut writer) => break writer,
             };
         };
 
@@ -198,7 +198,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
     }
 }
 
-enum ZstdSeekableEncoderState {
+enum ZstdFramedEncoderState {
     Encoding { current_frame: ZstdFrameSize },
     FinishingFrame { current_frame: ZstdFrameSize },
     FinishedFrame,

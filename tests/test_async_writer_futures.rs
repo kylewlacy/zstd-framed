@@ -71,12 +71,12 @@ proptest! {
     }
 
     #[test]
-    fn test_async_writer_tokio_encode_with_table(
+    fn test_async_writer_futures_encode_with_table(
         data in test_utils::arb_data(),
         level in test_utils::arb_zstd_level(),
         frame_size in test_utils::arb_frame_size(),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut writer = AsyncZstdWriter::builder(&mut encoded)
@@ -99,11 +99,11 @@ proptest! {
     }
 
     #[test]
-    fn test_async_writer_tokio_encode_frames_with_table(
+    fn test_async_writer_futures_encode_frames_with_table(
         frames in test_utils::arb_data_framed(),
         level in test_utils::arb_zstd_level(),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut writer = AsyncZstdWriter::builder(&mut encoded)
@@ -135,11 +135,11 @@ proptest! {
     }
 
     #[test]
-    fn test_async_writer_tokio_encode_without_table(
+    fn test_async_writer_futures_encode_without_table(
         data in test_utils::arb_data(),
         level in test_utils::arb_zstd_level(),
     ) {
-        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        futures::executor::block_on(async move {
             let mut encoded = vec![];
 
             let mut writer = AsyncZstdWriter::builder(&mut encoded)

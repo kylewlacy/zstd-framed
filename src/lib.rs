@@ -4,6 +4,7 @@ mod macros;
 pub mod async_writer;
 mod buffer;
 mod encoder;
+pub(crate) mod frames;
 pub mod writer;
 
 #[derive(Debug, Clone, Copy)]

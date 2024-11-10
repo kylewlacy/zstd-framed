@@ -1,11 +1,11 @@
 use zstd::stream::raw::Operation as _;
 
-use crate::{buffer::Buffer, ZstdOutcome};
+use crate::{buffer::Buffer, frames::ZstdFrameSize, ZstdOutcome};
 
 pub struct ZstdFramedEncoder<'dict> {
     encoder: zstd::stream::raw::Encoder<'dict>,
     frame_size: u32,
-    finished_frames: Vec<ZstdFrame>,
+    finished_frames: Vec<ZstdFrameSize>,
     state: ZstdSeekableEncoderState,
 }
 
@@ -16,7 +16,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
             frame_size,
             finished_frames: vec![],
             state: ZstdSeekableEncoderState::Encoding {
-                current_frame: ZstdFrame::default(),
+                current_frame: ZstdFrameSize::default(),
             },
         }
     }
@@ -24,7 +24,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
     fn prepare_frame(
         &mut self,
         buffer: &mut impl Buffer,
-    ) -> std::io::Result<ZstdOutcome<ZstdFrame>> {
+    ) -> std::io::Result<ZstdOutcome<ZstdFrameSize>> {
         match self.state {
             ZstdSeekableEncoderState::Encoding { current_frame } => {
                 Ok(ZstdOutcome::Complete(current_frame))
@@ -44,7 +44,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
 
                     self.finished_frames.push(current_frame);
 
-                    let current_frame = ZstdFrame::default();
+                    let current_frame = ZstdFrameSize::default();
                     self.state = ZstdSeekableEncoderState::Encoding { current_frame };
                     Ok(ZstdOutcome::Complete(current_frame))
                 } else {
@@ -55,7 +55,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
             }
             ZstdSeekableEncoderState::FinishedFrame => {
                 self.encoder.reinit()?;
-                let current_frame = ZstdFrame::default();
+                let current_frame = ZstdFrameSize::default();
                 self.state = ZstdSeekableEncoderState::Encoding { current_frame };
                 Ok(ZstdOutcome::Complete(current_frame))
             }
@@ -104,9 +104,8 @@ impl<'dict> ZstdFramedEncoder<'dict> {
 
         let mut current_frame = complete_ok!(self.prepare_frame(buffer)?);
 
-        let frame_remaining_bytes = self
-            .frame_size
-            .saturating_sub(current_frame.decompressed_size);
+        let frame_remaining_bytes =
+            u64::from(self.frame_size).saturating_sub(current_frame.decompressed_size);
         let frame_remaining_bytes: usize = frame_remaining_bytes
             .try_into()
             .expect("could not cast remaining bytes to usize");
@@ -199,38 +198,9 @@ impl<'dict> ZstdFramedEncoder<'dict> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-struct ZstdFrame {
-    compressed_size: u32,
-    decompressed_size: u32,
-}
-
-impl ZstdFrame {
-    fn add_sizes(&mut self, compressed_written: usize, decompressed_written: usize) {
-        let compressed_written: u32 = compressed_written
-            .try_into()
-            .expect("failed to convert written bytes to u32");
-        let decompressed_written: u32 = decompressed_written
-            .try_into()
-            .expect("failed to convert written bytes to u32");
-
-        let compressed_size = self
-            .compressed_size
-            .checked_add(compressed_written)
-            .expect("adding to compressed size overflowed");
-        let decompressed_size = self
-            .decompressed_size
-            .checked_add(decompressed_written)
-            .expect("adding to decompressed size overflowed");
-
-        self.compressed_size = compressed_size;
-        self.decompressed_size = decompressed_size;
-    }
-}
-
 enum ZstdSeekableEncoderState {
-    Encoding { current_frame: ZstdFrame },
-    FinishingFrame { current_frame: ZstdFrame },
+    Encoding { current_frame: ZstdFrameSize },
+    FinishingFrame { current_frame: ZstdFrameSize },
     FinishedFrame,
     WritingTable(ZstdSeekableTableWriter),
 }
@@ -250,7 +220,7 @@ impl ZstdSeekableTableWriter {
 
     fn write_table(
         &mut self,
-        frames: &[ZstdFrame],
+        frames: &[ZstdFrameSize],
         buffer: &mut impl Buffer,
     ) -> std::io::Result<ZstdOutcome<()>> {
         loop {
@@ -281,8 +251,17 @@ impl ZstdSeekableTableWriter {
                     let frame = frames.get(num_written);
                     match frame {
                         Some(frame) => {
-                            let compressed_size_bytes = frame.compressed_size.to_le_bytes();
-                            let decompressed_size_bytes = frame.decompressed_size.to_le_bytes();
+                            let compressed_size: u32 = frame
+                                .compressed_size
+                                .try_into()
+                                .expect("could not convert frame compressed size to u32");
+                            let decompressed_size: u32 = frame
+                                .decompressed_size
+                                .try_into()
+                                .expect("could not convert frame decompressed size to u32");
+
+                            let compressed_size_bytes = compressed_size.to_le_bytes();
+                            let decompressed_size_bytes = decompressed_size.to_le_bytes();
 
                             crate::buffer::write_all_to_buffer(
                                 &mut self.buffer,

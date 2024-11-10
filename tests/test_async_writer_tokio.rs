@@ -43,7 +43,7 @@ proptest! {
         level in test_utils::arb_zstd_level(),
         frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
-        let encoded = futures::executor::block_on({
+        let encoded = tokio::runtime::Runtime::new().unwrap().block_on({
             let data = data.clone();
             async move {
                 let (first, second) = data.split_at(pos);

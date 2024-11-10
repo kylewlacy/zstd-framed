@@ -11,6 +11,7 @@ tokio = { version = "1.41.0", optional = true, default-features = false, feature
 zstd = "0.13.2"
 
 [dev-dependencies]
+assert_matches = "1.5.0"
 easy-hex = { version = "1.0.0", default-features = false }
 futures = { version = "0.3.31" }
 pretty_assertions = "1.4.1"

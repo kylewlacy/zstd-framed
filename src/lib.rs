@@ -6,7 +6,7 @@ pub mod async_writer;
 mod buffer;
 mod decoder;
 mod encoder;
-pub(crate) mod frames;
+pub mod frames;
 pub mod reader;
 pub mod writer;
 

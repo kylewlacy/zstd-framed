@@ -3,7 +3,8 @@ use std::io::{Read as _, Seek as _, Write as _};
 use easy_hex::Hex;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
-use zstd_framed::{reader::ZstdReader, writer::ZstdWriter};
+use test_utils::ReaderAction;
+use zstd_framed::{frames::read_seek_table, reader::ZstdReader, writer::ZstdWriter};
 
 mod test_utils;
 
@@ -144,5 +145,76 @@ proptest! {
         decoder.read_to_end(&mut decoded_2).unwrap();
 
         assert_eq!(Hex(&decoded_2[..]), Hex(&data[pos_2..]));
+    }
+
+    #[test]
+    fn test_reader_seek_frame_boundary_without_table(
+        (frames, pos) in test_utils::arb_data_framed_with_frame_boundary_pos(),
+        level in test_utils::arb_zstd_level(),
+    ) {
+        let mut encoded = vec![];
+
+        let mut encoder = ZstdWriter::builder(&mut encoded)
+            .with_compression_level(level)
+            .build()
+            .unwrap();
+
+        for frame in &frames {
+            encoder.write_all(&frame[..]).unwrap();
+            encoder.finish_frame().unwrap();
+        }
+        drop(encoder);
+
+        let (reader, watcher_actions) = test_utils::ReaderWatcher::new(std::io::Cursor::new(&encoded[..]));
+        let mut decoder = ZstdReader::builder(reader).build().unwrap();
+
+        let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).unwrap();
+        assert_eq!(seeked_pos, pos as u64);
+
+        let actions = std::mem::take(&mut *watcher_actions.write().unwrap());
+        assert!(actions.iter().all(|action| matches!(action, ReaderAction::Read(_))));
+    }
+
+    #[test]
+    fn test_reader_seek_frame_boundary_with_table(
+        (frames, pos) in test_utils::arb_data_framed_with_frame_boundary_pos(),
+        level in test_utils::arb_zstd_level(),
+    ) {
+        let data_len = frames.iter().map(|frame| frame.len()).sum::<usize>();
+        prop_assume!(pos > 0 && pos < data_len);
+
+        let mut encoded = vec![];
+
+        let mut encoder = ZstdWriter::builder(&mut encoded)
+            .with_compression_level(level)
+            .with_seekable_table(u32::MAX)
+            .build()
+            .unwrap();
+
+        for frame in &frames {
+            encoder.write_all(&frame[..]).unwrap();
+            encoder.finish_frame().unwrap();
+        }
+        drop(encoder);
+
+        let table = read_seek_table(&mut std::io::Cursor::new(&encoded[..])).unwrap().unwrap();
+        let frame = table.frames()
+            .find(|frame| frame.decompressed_range().start == u64::try_from(pos).unwrap())
+            .unwrap();
+
+        let (reader, watcher_actions) = test_utils::ReaderWatcher::new(std::io::Cursor::new(&encoded[..]));
+        let mut decoder = ZstdReader::builder(reader).with_table(table).build().unwrap();
+
+        let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).unwrap();
+        assert_eq!(seeked_pos, pos as u64);
+
+        let actions = std::mem::take(&mut *watcher_actions.write().unwrap());
+
+        assert_eq!(
+            actions,
+            [
+                ReaderAction::Seek(std::io::SeekFrom::Start(frame.compressed_range().start))
+            ],
+        );
     }
 }

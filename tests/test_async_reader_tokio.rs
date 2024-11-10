@@ -3,8 +3,11 @@
 use easy_hex::Hex;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
+use test_utils::ReaderAction;
 use tokio::io::{AsyncReadExt as _, AsyncSeek as _, AsyncSeekExt as _, AsyncWriteExt as _};
-use zstd_framed::{async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter};
+use zstd_framed::{
+    async_reader::AsyncZstdReader, async_writer::AsyncZstdWriter, frames::tokio::read_seek_table,
+};
 
 mod test_utils;
 
@@ -200,6 +203,81 @@ proptest! {
             decoder.as_mut().read_to_end(&mut decoded_2).await.unwrap();
 
             assert_eq!(Hex(&decoded_2[..]), Hex(&data[pos_1..]));
+        });
+    }
+
+    #[test]
+    fn test_async_reader_tokio_seek_frame_boundary_without_table(
+        (frames, pos) in test_utils::arb_data_framed_with_frame_boundary_pos(),
+        level in test_utils::arb_zstd_level(),
+    ) {
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let mut encoded = vec![];
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded)
+                .with_compression_level(level)
+                .build()
+                .unwrap();
+
+            for frame in &frames {
+                encoder.write_all(&frame[..]).await.unwrap();
+                encoder.finish_frame().unwrap();
+            }
+            encoder.shutdown().await.unwrap();
+
+            let (reader, watcher_actions) = test_utils::ReaderWatcher::new(std::io::Cursor::new(&encoded[..]));
+            let mut decoder = AsyncZstdReader::builder_tokio(reader).build().unwrap().seekable();
+
+            let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).await.unwrap();
+            assert_eq!(seeked_pos, pos as u64);
+
+            let actions = std::mem::take(&mut *watcher_actions.write().unwrap());
+            assert!(actions.iter().all(|action| matches!(action, ReaderAction::Read(_))));
+        });
+    }
+
+    #[test]
+    fn test_async_reader_tokio_seek_frame_boundary_with_table(
+        (frames, pos) in test_utils::arb_data_framed_with_frame_boundary_pos(),
+        level in test_utils::arb_zstd_level(),
+    ) {
+        let data_len = frames.iter().map(|frame| frame.len()).sum::<usize>();
+        prop_assume!(pos > 0 && pos < data_len);
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let mut encoded = vec![];
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded)
+                .with_compression_level(level)
+                .with_seekable_table(u32::MAX)
+                .build()
+                .unwrap();
+
+            for frame in &frames {
+                encoder.write_all(&frame[..]).await.unwrap();
+                encoder.finish_frame().unwrap();
+            }
+            encoder.shutdown().await.unwrap();
+
+            let table = read_seek_table(&mut std::io::Cursor::new(&encoded[..])).await.unwrap().unwrap();
+            let frame = table.frames()
+                .find(|frame| frame.decompressed_range().start == u64::try_from(pos).unwrap())
+                .unwrap();
+
+            let (reader, watcher_actions) = test_utils::ReaderWatcher::new(std::io::Cursor::new(&encoded[..]));
+            let mut decoder = AsyncZstdReader::builder_tokio(reader).with_table(table).build().unwrap().seekable();
+
+            let seeked_pos = decoder.seek(std::io::SeekFrom::Start(u64::try_from(pos).unwrap())).await.unwrap();
+            assert_eq!(seeked_pos, pos as u64);
+
+            let actions = std::mem::take(&mut *watcher_actions.write().unwrap());
+
+            assert_eq!(
+                actions,
+                [
+                    ReaderAction::Seek(std::io::SeekFrom::Start(frame.compressed_range().start))
+                ],
+            );
         });
     }
 }

@@ -29,11 +29,17 @@ proptest! {
     fn test_async_reader_futures_decode_from_writer(
         data in test_utils::arb_data(),
         level in test_utils::arb_zstd_level(),
-        frame_size in test_utils::arb_frame_size(),
+        frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut encoded = vec![];
-            let mut encoder = AsyncZstdWriter::new(&mut encoded, level, frame_size).unwrap();
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
+            if let Some(frame_size) = frame_size {
+                encoder = encoder.with_seekable_table(frame_size);
+            }
+            let mut encoder = encoder.build().unwrap();
+
             encoder.write_all(&data[..]).await.unwrap();
             encoder.close().await.unwrap();
 
@@ -52,7 +58,7 @@ proptest! {
     ) {
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut encoded = vec![];
-            let mut encoder = AsyncZstdWriter::new(&mut encoded, level, 99999).unwrap();
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level).build().unwrap();
             for frame in &frames {
                 encoder.write_all(&frame[..]).await.unwrap();
                 encoder.finish_frame().unwrap();
@@ -73,11 +79,17 @@ proptest! {
     fn test_async_reader_futures_seek_from_start_then_decode(
         (data, pos) in test_utils::arb_data_with_pos(),
         level in test_utils::arb_zstd_level(),
-        frame_size in test_utils::arb_frame_size(),
+        frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut encoded = vec![];
-            let mut encoder = AsyncZstdWriter::new(&mut encoded, level, frame_size).unwrap();
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
+            if let Some(frame_size) = frame_size {
+                encoder = encoder.with_seekable_table(frame_size);
+            }
+            let mut encoder = encoder.build().unwrap();
+
             encoder.write_all(&data[..]).await.unwrap();
             encoder.close().await.unwrap();
 
@@ -94,11 +106,17 @@ proptest! {
     fn test_async_reader_futures_seek_from_end_then_decode(
         (data, pos) in test_utils::arb_data_with_pos(),
         level in test_utils::arb_zstd_level(),
-        frame_size in test_utils::arb_frame_size(),
+        frame_size in prop::option::of(test_utils::arb_frame_size()),
     ) {
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut encoded = vec![];
-            let mut encoder = AsyncZstdWriter::new(&mut encoded, level, frame_size).unwrap();
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
+            if let Some(frame_size) = frame_size {
+                encoder = encoder.with_seekable_table(frame_size);
+            }
+            let mut encoder = encoder.build().unwrap();
+
             encoder.write_all(&data[..]).await.unwrap();
             encoder.close().await.unwrap();
 
@@ -115,12 +133,18 @@ proptest! {
     fn test_async_reader_futures_seek_then_decode(
         (data, [pos_1, pos_2]) in test_utils::arb_data_with_positions(),
         level in test_utils::arb_zstd_level(),
-        frame_size in test_utils::arb_frame_size(),
+        frame_size in prop::option::of(test_utils::arb_frame_size()),
         seek_type in test_utils::arb_seek_type(),
     ) {
         tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut encoded = vec![];
-            let mut encoder = AsyncZstdWriter::new(&mut encoded, level, frame_size).unwrap();
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
+            if let Some(frame_size) = frame_size {
+                encoder = encoder.with_seekable_table(frame_size);
+            }
+            let mut encoder = encoder.build().unwrap();
+
             encoder.write_all(&data[..]).await.unwrap();
             encoder.close().await.unwrap();
 

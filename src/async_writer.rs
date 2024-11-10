@@ -10,20 +10,8 @@ pin_project_lite::pin_project! {
 }
 
 impl<'dict, W> AsyncZstdWriter<'dict, W> {
-    pub fn new(writer: W, level: i32, max_frame_size: u32) -> std::io::Result<Self> {
-        assert!(max_frame_size > 0, "max frame size must be greater than 0");
-
-        let zstd_encoder = zstd::stream::raw::Encoder::new(level)?;
-        let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
-        let encoder = ZstdFramedEncoder::new(
-            zstd_encoder,
-            Some(ZstdFramedEncoderSeekableTableConfig { max_frame_size }),
-        );
-        Ok(Self {
-            writer,
-            encoder,
-            buffer,
-        })
+    pub fn builder(writer: W) -> ZstdWriterBuilder<W> {
+        ZstdWriterBuilder::new(writer)
     }
 
     pub fn finish_frame(&mut self) -> std::io::Result<()> {
@@ -244,5 +232,48 @@ where
 
         let this = self.project();
         this.writer.poll_close(cx)
+    }
+}
+
+pub struct ZstdWriterBuilder<W> {
+    writer: W,
+    compression_level: i32,
+    seekable_table_config: Option<ZstdFramedEncoderSeekableTableConfig>,
+}
+
+impl<W> ZstdWriterBuilder<W> {
+    fn new(writer: W) -> Self {
+        Self {
+            writer,
+            compression_level: 0,
+            seekable_table_config: None,
+        }
+    }
+
+    pub fn with_compression_level(mut self, level: i32) -> Self {
+        self.compression_level = level;
+        self
+    }
+
+    pub fn with_seekable_table(mut self, max_frame_size: u32) -> Self {
+        assert!(max_frame_size > 0, "max frame size must be greater than 0");
+
+        self.seekable_table_config = Some(ZstdFramedEncoderSeekableTableConfig { max_frame_size });
+        self
+    }
+
+    pub fn build(self) -> std::io::Result<AsyncZstdWriter<'static, W>>
+    where
+        W: std::io::Write,
+    {
+        let zstd_encoder = zstd::stream::raw::Encoder::new(self.compression_level)?;
+        let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
+        let encoder = ZstdFramedEncoder::new(zstd_encoder, self.seekable_table_config);
+
+        Ok(AsyncZstdWriter {
+            writer: self.writer,
+            encoder,
+            buffer,
+        })
     }
 }

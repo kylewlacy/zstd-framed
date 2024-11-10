@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(any(feature = "tokio", feature = "futures")),
+    expect(unused_macros)
+)]
+
 macro_rules! complete_ok {
     ($e:expr) => {
         match $e {

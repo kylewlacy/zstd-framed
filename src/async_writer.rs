@@ -1,6 +1,4 @@
-use std::{pin::Pin, task::Poll};
-
-use crate::{encoder::ZstdFramedEncoder, ZstdOutcome};
+use crate::encoder::ZstdFramedEncoder;
 
 pin_project_lite::pin_project! {
     pub struct AsyncZstdWriter<'dict, W> {
@@ -33,9 +31,9 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
 
     #[cfg(feature = "tokio")]
     fn flush_uncommitted_tokio(
-        self: Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>>
+    ) -> std::task::Poll<Result<(), std::io::Error>>
     where
         W: tokio::io::AsyncWrite,
     {
@@ -46,14 +44,14 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         loop {
             let uncommitted = this.buffer.uncommitted();
             if uncommitted.is_empty() {
-                return Poll::Ready(Ok(()));
+                return std::task::Poll::Ready(Ok(()));
             }
 
             let committed = ready!(this.writer.as_mut().poll_write(cx, uncommitted))?;
             this.buffer.commit(committed);
 
             if committed == 0 {
-                return Poll::Ready(Err(std::io::Error::new(
+                return std::task::Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "failed to write buffered data",
                 )));
@@ -63,9 +61,9 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
 
     #[cfg(feature = "futures")]
     fn flush_uncommitted_futures(
-        self: Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>>
+    ) -> std::task::Poll<Result<(), std::io::Error>>
     where
         W: futures::AsyncWrite,
     {
@@ -76,14 +74,14 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         loop {
             let uncommitted = this.buffer.uncommitted();
             if uncommitted.is_empty() {
-                return Poll::Ready(Ok(()));
+                return std::task::Poll::Ready(Ok(()));
             }
 
             let committed = ready!(this.writer.as_mut().poll_write(cx, uncommitted))?;
             this.buffer.commit(committed);
 
             if committed == 0 {
-                return Poll::Ready(Err(std::io::Error::new(
+                return std::task::Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "failed to write buffered data",
                 )));
@@ -98,10 +96,10 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         data: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> std::task::Poll<std::io::Result<usize>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
@@ -110,18 +108,18 @@ where
             let outcome = this.encoder.encode(data, this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(consumed) => {
-                    return Poll::Ready(Ok(consumed));
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(consumed) => {
+                    return std::task::Poll::Ready(Ok(consumed));
                 }
             }
         }
     }
 
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
@@ -130,8 +128,8 @@ where
             let outcome = this.encoder.flush(this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(_) => {
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(_) => {
                     break;
                 }
             }
@@ -144,9 +142,9 @@ where
     }
 
     fn poll_shutdown(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
@@ -155,8 +153,8 @@ where
             let outcome = this.encoder.shutdown(this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(_) => {
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(_) => {
                     ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
                     break;
@@ -175,10 +173,10 @@ where
     W: futures::AsyncWrite + Unpin,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         data: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> std::task::Poll<std::io::Result<usize>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
@@ -187,18 +185,18 @@ where
             let outcome = this.encoder.encode(data, this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(consumed) => {
-                    return Poll::Ready(Ok(consumed));
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(consumed) => {
+                    return std::task::Poll::Ready(Ok(consumed));
                 }
             }
         }
     }
 
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
@@ -207,8 +205,8 @@ where
             let outcome = this.encoder.flush(this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(_) => {
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(_) => {
                     break;
                 }
             }
@@ -221,9 +219,9 @@ where
     }
 
     fn poll_close(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         loop {
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
@@ -232,8 +230,8 @@ where
             let outcome = this.encoder.shutdown(this.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
-                ZstdOutcome::Complete(_) => {
+                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::Complete(_) => {
                     ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
                     break;

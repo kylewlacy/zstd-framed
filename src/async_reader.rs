@@ -1,7 +1,4 @@
-use std::{pin::Pin, task::Poll};
-
 use crate::{
-    buffer::Buffer,
     decoder::ZstdFramedDecoder,
     frames::{ZstdFrame, ZstdFrameTable},
 };
@@ -46,9 +43,9 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
 
     #[cfg(feature = "tokio")]
     fn poll_jump_to_end_tokio(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<u64>>
+    ) -> std::task::Poll<std::io::Result<u64>>
     where
         R: tokio::io::AsyncBufRead,
     {
@@ -64,14 +61,14 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
             self.as_mut().consume(decoded_len);
         }
 
-        Poll::Ready(Ok(self.current_pos))
+        std::task::Poll::Ready(Ok(self.current_pos))
     }
 
     #[cfg(feature = "futures")]
     fn poll_jump_to_end_futures(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<u64>>
+    ) -> std::task::Poll<std::io::Result<u64>>
     where
         R: futures::AsyncBufRead,
     {
@@ -87,7 +84,7 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
             self.as_mut().consume(decoded_len);
         }
 
-        Poll::Ready(Ok(self.current_pos))
+        std::task::Poll::Ready(Ok(self.current_pos))
     }
 }
 
@@ -97,9 +94,9 @@ where
     R: tokio::io::AsyncBufRead,
 {
     fn poll_fill_buf(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<&[u8]>> {
+    ) -> std::task::Poll<std::io::Result<&[u8]>> {
         use crate::buffer::Buffer as _;
 
         loop {
@@ -118,10 +115,10 @@ where
             this.reader.consume(consumed);
         }
 
-        Poll::Ready(Ok(self.project().buffer.uncommitted()))
+        std::task::Poll::Ready(Ok(self.project().buffer.uncommitted()))
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
+    fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         use crate::buffer::Buffer as _;
 
         let this = self.project();
@@ -139,17 +136,17 @@ where
     R: tokio::io::AsyncBufRead,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         use tokio::io::AsyncBufRead as _;
 
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
         let consumable = filled.len().min(buf.remaining());
         buf.put_slice(&filled[..consumable]);
         self.consume(consumable);
-        Poll::Ready(Ok(()))
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -159,9 +156,9 @@ where
     R: futures::io::AsyncBufRead,
 {
     fn poll_fill_buf(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<&[u8]>> {
+    ) -> std::task::Poll<std::io::Result<&[u8]>> {
         use crate::buffer::Buffer as _;
 
         loop {
@@ -180,10 +177,10 @@ where
             this.reader.consume(consumed);
         }
 
-        Poll::Ready(Ok(self.project().buffer.uncommitted()))
+        std::task::Poll::Ready(Ok(self.project().buffer.uncommitted()))
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
+    fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         use crate::buffer::Buffer as _;
 
         let this = self.project();
@@ -201,21 +198,21 @@ where
     R: futures::AsyncBufRead,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> std::task::Poll<std::io::Result<usize>> {
         use futures::AsyncBufRead as _;
 
         if buf.is_empty() {
-            return Poll::Ready(Ok(0));
+            return std::task::Poll::Ready(Ok(0));
         }
 
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
         let consumable = filled.len().min(buf.len());
         buf[..consumable].copy_from_slice(&filled[..consumable]);
         self.consume(consumable);
-        Poll::Ready(Ok(consumable))
+        std::task::Poll::Ready(Ok(consumable))
     }
 }
 
@@ -230,19 +227,20 @@ pin_project_lite::pin_project! {
 impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
     #[cfg(feature = "tokio")]
     fn poll_cancel_seek_tokio(
-        self: Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>>
+    ) -> std::task::Poll<std::io::Result<()>>
     where
         R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
     {
+        use crate::buffer::Buffer as _;
         use tokio::io::AsyncBufRead as _;
 
         let mut this = self.project();
 
         loop {
             let Some(pending_seek) = *this.pending_seek else {
-                return Poll::Ready(Ok(()));
+                return std::task::Poll::Ready(Ok(()));
             };
 
             match pending_seek.state {
@@ -278,9 +276,9 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                             Ok(_) => {}
                             Err(error) => {
                                 *this.pending_seek = None;
-                                return Poll::Ready(Err(std::io::Error::other(format!(
-                                    "failed to cancel in-progress zstd seek: {error}"
-                                ))));
+                                return std::task::Poll::Ready(Err(std::io::Error::other(
+                                    format!("failed to cancel in-progress zstd seek: {error}"),
+                                )));
                             }
                         }
                     } else {
@@ -302,7 +300,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -315,7 +313,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -336,7 +334,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(filled) => filled,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -344,7 +342,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 
                     if filled.is_empty() {
                         *this.pending_seek = None;
-                        return Poll::Ready(Err(std::io::Error::new(
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
                             "reached eof while trying to cancel in-progress zstd seek",
                         )));
@@ -368,19 +366,20 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 
     #[cfg(feature = "futures")]
     fn poll_cancel_seek_futures(
-        self: Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>>
+    ) -> std::task::Poll<std::io::Result<()>>
     where
         R: futures::AsyncBufRead + futures::AsyncSeek,
     {
+        use crate::buffer::Buffer as _;
         use futures::AsyncBufRead as _;
 
         let mut this = self.project();
 
         loop {
             let Some(pending_seek) = *this.pending_seek else {
-                return Poll::Ready(Ok(()));
+                return std::task::Poll::Ready(Ok(()));
             };
 
             match pending_seek.state {
@@ -428,7 +427,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -441,7 +440,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -462,7 +461,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         Ok(filled) => filled,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other(format!(
+                            return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
                             ))));
                         }
@@ -470,7 +469,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 
                     if filled.is_empty() {
                         *this.pending_seek = None;
-                        return Poll::Ready(Err(std::io::Error::new(
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
                             "reached eof while trying to cancel in-progress zstd seek",
                         )));
@@ -499,16 +498,16 @@ where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
     fn poll_fill_buf(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<&[u8]>> {
+    ) -> std::task::Poll<std::io::Result<&[u8]>> {
         ready!(self.as_mut().poll_cancel_seek_tokio(cx))?;
 
         let this = self.project();
         this.reader.poll_fill_buf(cx)
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
+    fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         let this = self.project();
 
         assert!(
@@ -526,17 +525,17 @@ where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         use tokio::io::AsyncBufRead as _;
 
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
         let consumable = filled.len().min(buf.remaining());
         buf.put_slice(&filled[..consumable]);
         self.consume(consumable);
-        Poll::Ready(Ok(()))
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -545,7 +544,10 @@ impl<'dict, R> tokio::io::AsyncSeek for AsyncZstdSeekableReader<'dict, R>
 where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
-    fn start_seek(self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+    fn start_seek(
+        self: std::pin::Pin<&mut Self>,
+        position: std::io::SeekFrom,
+    ) -> std::io::Result<()> {
         let mut this = self.project();
         if this.pending_seek.is_some() {
             return Err(std::io::Error::other("seek already in progress"));
@@ -560,16 +562,17 @@ where
     }
 
     fn poll_complete(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<u64>> {
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        use crate::buffer::Buffer as _;
         use tokio::io::AsyncBufRead as _;
 
         loop {
             let mut this = self.as_mut().project();
 
             let Some(pending_seek) = *this.pending_seek else {
-                return Poll::Ready(Ok(this.reader.current_pos));
+                return std::task::Poll::Ready(Ok(this.reader.current_pos));
             };
 
             match pending_seek.state {
@@ -592,7 +595,7 @@ where
                             Some(offset) => offset,
                             None => {
                                 *this.pending_seek = None;
-                                return Poll::Ready(Err(std::io::Error::other(
+                                return std::task::Poll::Ready(Err(std::io::Error::other(
                                     "invalid seek offset",
                                 )));
                             }
@@ -610,7 +613,7 @@ where
                         Ok(end_pos) => end_pos,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
@@ -619,7 +622,9 @@ where
                         Some(target_pos) => target_pos,
                         None => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other("invalid seek offset")));
+                            return std::task::Poll::Ready(Err(std::io::Error::other(
+                                "invalid seek offset",
+                            )));
                         }
                     };
 
@@ -655,7 +660,7 @@ where
                             Ok(_) => {}
                             Err(error) => {
                                 *this.pending_seek = None;
-                                return Poll::Ready(Err(error));
+                                return std::task::Poll::Ready(Err(error));
                             }
                         }
                     } else {
@@ -679,7 +684,7 @@ where
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
@@ -688,7 +693,7 @@ where
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     }
 
@@ -718,13 +723,13 @@ where
                         Ok(filled) => filled,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
                     if filled.is_empty() {
                         *this.pending_seek = None;
-                        return Poll::Ready(Err(std::io::Error::new(
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
                             "reached eof while trying to decode to offset",
                         )));
@@ -747,7 +752,7 @@ where
                 PendingSeekState::RestoringSeekToFrame { .. }
                 | PendingSeekState::RestoringJumpForward { .. } => {
                     ready!(self.as_mut().poll_cancel_seek_tokio(cx))?;
-                    return Poll::Ready(Err(std::io::Error::other("seek cancelled")));
+                    return std::task::Poll::Ready(Err(std::io::Error::other("seek cancelled")));
                 }
             }
         }
@@ -760,16 +765,16 @@ where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {
     fn poll_fill_buf(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<&[u8]>> {
+    ) -> std::task::Poll<std::io::Result<&[u8]>> {
         ready!(self.as_mut().poll_cancel_seek_futures(cx))?;
 
         let this = self.project();
         this.reader.poll_fill_buf(cx)
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
+    fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         let this = self.project();
 
         assert!(
@@ -787,17 +792,17 @@ where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> std::task::Poll<std::io::Result<usize>> {
         use futures::AsyncBufRead as _;
 
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
         let consumable = filled.len().min(buf.len());
         buf[..consumable].copy_from_slice(&filled[..consumable]);
         self.consume(consumable);
-        Poll::Ready(Ok(consumable))
+        std::task::Poll::Ready(Ok(consumable))
     }
 }
 
@@ -807,10 +812,11 @@ where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {
     fn poll_seek(
-        mut self: Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         position: std::io::SeekFrom,
-    ) -> Poll<std::io::Result<u64>> {
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        use crate::buffer::Buffer as _;
         use futures::io::AsyncBufRead as _;
 
         loop {
@@ -855,7 +861,7 @@ where
                             Some(offset) => offset,
                             None => {
                                 *this.pending_seek = None;
-                                return Poll::Ready(Err(std::io::Error::other(
+                                return std::task::Poll::Ready(Err(std::io::Error::other(
                                     "invalid seek offset",
                                 )));
                             }
@@ -873,7 +879,7 @@ where
                         Ok(end_pos) => end_pos,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
@@ -882,7 +888,9 @@ where
                         Some(target_pos) => target_pos,
                         None => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(std::io::Error::other("invalid seek offset")));
+                            return std::task::Poll::Ready(Err(std::io::Error::other(
+                                "invalid seek offset",
+                            )));
                         }
                     };
 
@@ -932,7 +940,7 @@ where
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
@@ -941,7 +949,7 @@ where
                         Ok(_) => {}
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     }
 
@@ -961,7 +969,7 @@ where
                 } => {
                     assert_eq!(target_pos, this.reader.current_pos);
                     *this.pending_seek = None;
-                    return Poll::Ready(Ok(this.reader.current_pos));
+                    return std::task::Poll::Ready(Ok(this.reader.current_pos));
                 }
                 PendingSeekState::JumpingForward {
                     target_pos,
@@ -972,13 +980,13 @@ where
                         Ok(filled) => filled,
                         Err(error) => {
                             *this.pending_seek = None;
-                            return Poll::Ready(Err(error));
+                            return std::task::Poll::Ready(Err(error));
                         }
                     };
 
                     if filled.is_empty() {
                         *this.pending_seek = None;
-                        return Poll::Ready(Err(std::io::Error::new(
+                        return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
                             "reached eof while trying to decode to offset",
                         )));
@@ -1001,7 +1009,7 @@ where
                 PendingSeekState::RestoringSeekToFrame { .. }
                 | PendingSeekState::RestoringJumpForward { .. } => {
                     ready!(self.as_mut().poll_cancel_seek_futures(cx))?;
-                    return Poll::Ready(Err(std::io::Error::other("seek cancelled")));
+                    return std::task::Poll::Ready(Err(std::io::Error::other("seek cancelled")));
                 }
             }
         }
@@ -1063,6 +1071,7 @@ impl<R> ZstdReaderBuilder<R> {
     }
 }
 
+#[cfg_attr(not(any(feature = "tokio", feature = "futures")), expect(dead_code))]
 #[derive(Debug, Clone, Copy)]
 struct PendingSeek {
     initial_pos: u64,
@@ -1070,6 +1079,7 @@ struct PendingSeek {
     state: PendingSeekState,
 }
 
+#[cfg_attr(not(any(feature = "tokio", feature = "futures")), expect(dead_code))]
 #[derive(Debug, Clone, Copy)]
 enum PendingSeekState {
     Starting,

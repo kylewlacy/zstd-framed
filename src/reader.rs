@@ -17,10 +17,7 @@ impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
         ZstdReaderBuilder::new(reader)
     }
 
-    pub fn builder_buffered(reader: R) -> ZstdReaderBuilder<R>
-    where
-        R: std::io::BufRead,
-    {
+    pub fn builder_buffered(reader: R) -> ZstdReaderBuilder<R> {
         ZstdReaderBuilder::with_buffered(reader)
     }
 }

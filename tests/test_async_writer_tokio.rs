@@ -1,9 +1,9 @@
 #![cfg(feature = "tokio")]
 
 use easy_hex::Hex;
-use futures::AsyncWriteExt as _;
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
+use tokio::io::AsyncWriteExt as _;
 use zstd_framed::async_writer::AsyncZstdWriter;
 
 mod test_utils;
@@ -21,7 +21,7 @@ proptest! {
                 let mut encoded = vec![];
                 let mut writer = AsyncZstdWriter::new(&mut encoded, level, frame_size).unwrap();
                 writer.write_all(&data[..]).await.unwrap();
-                writer.close().await.unwrap();
+                writer.shutdown().await.unwrap();
 
                 encoded
             }
@@ -47,7 +47,7 @@ proptest! {
                 writer.write_all(first).await.unwrap();
                 writer.finish_frame().unwrap();
                 writer.write_all(second).await.unwrap();
-                writer.close().await.unwrap();
+                writer.shutdown().await.unwrap();
 
                 encoded
             }

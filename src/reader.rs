@@ -1,6 +1,6 @@
 use std::io::BufRead as _;
 
-use crate::{buffer::Buffer, decoder::ZstdFramedDecoder, table::ZstdFrameTable};
+use crate::{buffer::Buffer, decoder::ZstdFramedDecoder, table::ZstdSeekTable};
 
 pub struct ZstdReader<'dict, R> {
     reader: R,
@@ -152,7 +152,7 @@ where
 
 pub struct ZstdReaderBuilder<R> {
     reader: R,
-    table: ZstdFrameTable,
+    table: ZstdSeekTable,
 }
 
 impl<R> ZstdReaderBuilder<std::io::BufReader<R>> {
@@ -169,11 +169,11 @@ impl<R> ZstdReaderBuilder<R> {
     pub fn with_buffered(reader: R) -> Self {
         ZstdReaderBuilder {
             reader,
-            table: ZstdFrameTable::empty(),
+            table: ZstdSeekTable::empty(),
         }
     }
 
-    pub fn with_seek_table(mut self, table: ZstdFrameTable) -> Self {
+    pub fn with_seek_table(mut self, table: ZstdSeekTable) -> Self {
         self.table = table;
         self
     }

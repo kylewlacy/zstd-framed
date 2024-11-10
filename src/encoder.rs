@@ -2,14 +2,14 @@ use zstd::stream::raw::Operation as _;
 
 use crate::{
     buffer::Buffer,
-    table::{ZstdFrame, ZstdFrameSize, ZstdFrameTable},
+    table::{ZstdFrame, ZstdFrameSize, ZstdSeekTable},
     ZstdOutcome,
 };
 
 pub struct ZstdFramedEncoder<'dict> {
     encoder: zstd::stream::raw::Encoder<'dict>,
     max_frame_size: Option<u32>,
-    table: ZstdFrameTable,
+    table: ZstdSeekTable,
     state: ZstdFramedEncoderState,
     write_table: bool,
 }
@@ -34,7 +34,7 @@ impl<'dict> ZstdFramedEncoder<'dict> {
 
         Self {
             encoder,
-            table: ZstdFrameTable::empty(),
+            table: ZstdSeekTable::empty(),
             max_frame_size,
             write_table,
             state: ZstdFramedEncoderState::Encoding {
@@ -276,7 +276,7 @@ impl ZstdSeekTableWriter {
 
     fn write_table(
         &mut self,
-        table: &ZstdFrameTable,
+        table: &ZstdSeekTable,
         buffer: &mut impl Buffer,
     ) -> std::io::Result<ZstdOutcome<()>> {
         loop {

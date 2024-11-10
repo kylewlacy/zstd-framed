@@ -2,18 +2,18 @@ use zstd::stream::raw::Operation as _;
 
 use crate::{
     buffer::Buffer,
-    table::{ZstdFrame, ZstdFrameSize, ZstdFrameTable},
+    table::{ZstdFrame, ZstdFrameSize, ZstdSeekTable},
 };
 
 pub struct ZstdFramedDecoder<'dict> {
     decoder: zstd::stream::raw::Decoder<'dict>,
-    table: ZstdFrameTable,
+    table: ZstdSeekTable,
     current_frame: ZstdFrame,
     decoded_size: ZstdFrameSize,
 }
 
 impl<'dict> ZstdFramedDecoder<'dict> {
-    pub fn new(decoder: zstd::stream::raw::Decoder<'dict>, table: ZstdFrameTable) -> Self {
+    pub fn new(decoder: zstd::stream::raw::Decoder<'dict>, table: ZstdSeekTable) -> Self {
         let current_frame = table.first_frame().unwrap_or_else(|| ZstdFrame {
             compressed_pos: 0,
             decompressed_pos: 0,

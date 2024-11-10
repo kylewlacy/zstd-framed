@@ -1,10 +1,10 @@
 #![cfg(feature = "tokio")]
 
-use super::{ZstdFrame, ZstdFrameSize, ZstdFrameTable};
+use super::{ZstdFrame, ZstdFrameSize, ZstdSeekTable};
 
 use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
-pub async fn read_seek_table<R>(mut reader: R) -> std::io::Result<Option<ZstdFrameTable>>
+pub async fn read_seek_table<R>(mut reader: R) -> std::io::Result<Option<ZstdSeekTable>>
 where
     R: Unpin + tokio::io::AsyncRead + tokio::io::AsyncSeek,
 {
@@ -80,7 +80,7 @@ where
     }
 
     // Read each table entry
-    let mut table = ZstdFrameTable::empty();
+    let mut table = ZstdSeekTable::empty();
     let mut compressed_pos = 0;
     let mut decompressed_pos = 0;
     for frame_index in 0..num_frames {

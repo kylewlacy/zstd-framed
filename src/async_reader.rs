@@ -1,6 +1,6 @@
 use crate::{
     decoder::ZstdFramedDecoder,
-    table::{ZstdFrame, ZstdFrameTable},
+    table::{ZstdFrame, ZstdSeekTable},
 };
 
 pin_project_lite::pin_project! {
@@ -1018,7 +1018,7 @@ where
 
 pub struct ZstdReaderBuilder<R> {
     reader: R,
-    table: ZstdFrameTable,
+    table: ZstdSeekTable,
 }
 
 #[cfg(feature = "tokio")]
@@ -1048,11 +1048,11 @@ impl<R> ZstdReaderBuilder<R> {
     pub fn with_buffered(reader: R) -> Self {
         ZstdReaderBuilder {
             reader,
-            table: ZstdFrameTable::empty(),
+            table: ZstdSeekTable::empty(),
         }
     }
 
-    pub fn with_seek_table(mut self, table: ZstdFrameTable) -> Self {
+    pub fn with_seek_table(mut self, table: ZstdSeekTable) -> Self {
         self.table = table;
         self
     }

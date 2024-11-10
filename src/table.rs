@@ -2,11 +2,11 @@ pub mod futures;
 pub mod tokio;
 
 #[derive(Debug)]
-pub struct ZstdFrameTable {
+pub struct ZstdSeekTable {
     frames: Vec<ZstdFrame>,
 }
 
-impl ZstdFrameTable {
+impl ZstdSeekTable {
     pub fn empty() -> Self {
         Self { frames: vec![] }
     }
@@ -124,7 +124,7 @@ impl ZstdFrameSize {
     }
 }
 
-pub fn read_seek_table<R>(reader: &mut R) -> std::io::Result<Option<ZstdFrameTable>>
+pub fn read_seek_table<R>(reader: &mut R) -> std::io::Result<Option<ZstdSeekTable>>
 where
     R: std::io::Read + std::io::Seek,
 {
@@ -196,7 +196,7 @@ where
     }
 
     // Read each table entry
-    let mut table = ZstdFrameTable::empty();
+    let mut table = ZstdSeekTable::empty();
     let mut compressed_pos = 0;
     let mut decompressed_pos = 0;
     for frame_index in 0..num_frames {

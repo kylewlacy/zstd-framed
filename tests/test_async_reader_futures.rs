@@ -167,6 +167,49 @@ proptest! {
     }
 
     #[test]
+    fn test_async_reader_futures_multiple_seeks(
+        (data, [pos_1, pos_2, pos_3]) in test_utils::arb_data_with_positions(),
+        level in test_utils::arb_zstd_level(),
+        frame_size in prop::option::of(test_utils::arb_frame_size()),
+        [seek_type_1, seek_type_2, seek_type_3] in prop::array::uniform(test_utils::arb_seek_type()),
+    ) {
+        futures::executor::block_on(async move {
+            let mut encoded = vec![];
+
+            let mut encoder = AsyncZstdWriter::builder(&mut encoded).with_compression_level(level);
+            if let Some(frame_size) = frame_size {
+                encoder = encoder.with_seek_table(frame_size);
+            }
+            let mut encoder = encoder.build().unwrap();
+
+            encoder.write_all(&data[..]).await.unwrap();
+            encoder.close().await.unwrap();
+
+            let mut decoder = AsyncZstdReader::builder_futures(futures::io::Cursor::new(&encoded[..])).build().unwrap().seekable();
+
+            let mut decoded = vec![];
+            let seeked_pos = decoder.seek(seek_type_1.seek_from(0, pos_1, data.len())).await.unwrap();
+            assert_eq!(seeked_pos, pos_1 as u64);
+            decoder.read_to_end(&mut decoded).await.unwrap();
+            assert_eq!(Hex(&decoded[..]), Hex(&data[pos_1..]));
+
+            let mut decoded = vec![];
+            decoder.seek(std::io::SeekFrom::Start(seeked_pos)).await.unwrap();
+            let seeked_pos = decoder.seek(seek_type_2.seek_from(pos_1, pos_2, data.len())).await.unwrap();
+            assert_eq!(seeked_pos, pos_2 as u64);
+            decoder.read_to_end(&mut decoded).await.unwrap();
+            assert_eq!(Hex(&decoded[..]), Hex(&data[pos_2..]));
+
+            let mut decoded = vec![];
+            decoder.seek(std::io::SeekFrom::Start(seeked_pos)).await.unwrap();
+            let seeked_pos = decoder.seek(seek_type_3.seek_from(pos_2, pos_3, data.len())).await.unwrap();
+            assert_eq!(seeked_pos, pos_3 as u64);
+            decoder.read_to_end(&mut decoded).await.unwrap();
+            assert_eq!(Hex(&decoded[..]), Hex(&data[pos_3..]));
+        });
+    }
+
+    #[test]
     fn test_async_reader_futures_seek_frame_boundary_without_table(
         (frames, pos) in test_utils::arb_data_framed_with_frame_boundary_pos(),
         level in test_utils::arb_zstd_level(),

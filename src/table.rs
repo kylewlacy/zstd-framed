@@ -172,13 +172,11 @@ impl ZstdFrameSize {
 /// - `tokio`: [`crate::table::tokio::read_seek_table`]
 /// - `futures`: [`crate::table::futures::read_seek_table`]
 ///
-/// After calling this function, **the reader will be at an unspecified
-/// position**. Consider seeking the reader back to the start after this
-/// function returns.
-///
 /// Returns `Ok(None)` if the stream doesn't apper to contain a seek table.
 /// Otherwise, returns `Err(_)` if the seek table could not be parsed or
-/// if an I/O error occurred while trying to read the seek table.
+/// if an I/O error occurred while trying to read the seek table. If it
+/// returns `Ok(_)`, it will also restore the reader to its original
+/// stream position.
 ///
 /// The seek table is returned as-is from the underlying reader. No attempt
 /// is made to validate that the seek table lines up with the underlying
@@ -188,6 +186,27 @@ impl ZstdFrameSize {
 ///
 /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub fn read_seek_table<R>(reader: &mut R) -> std::io::Result<Option<ZstdSeekTable>>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    // Get the stream position, so we can restore it later
+    let initial_position = reader.stream_position()?;
+
+    // Read the seek table
+    let seek_table_result = read_seek_table_inner(reader);
+
+    // Try to restore the seek position, even if reading
+    // the seek table failed
+    let seek_result = reader.seek(std::io::SeekFrom::Start(initial_position));
+
+    // If we got an error, return whichever we got first
+    let seek_table = seek_table_result?;
+    seek_result?;
+
+    Ok(seek_table)
+}
+
+fn read_seek_table_inner<R>(reader: &mut R) -> std::io::Result<Option<ZstdSeekTable>>
 where
     R: std::io::Read + std::io::Seek,
 {

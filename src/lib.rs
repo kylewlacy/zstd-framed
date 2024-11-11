@@ -74,7 +74,6 @@
 //! let mut compressed_stream = std::io::Cursor::new(compressed_stream);
 //! let seek_table = zstd_framed::table::read_seek_table(&mut compressed_stream)?
 //!     .ok_or("expected stream to contain a seek table")?;
-//! compressed_stream.seek(std::io::SeekFrom::Start(0))?;
 //!
 //! // --------------------------------------------------
 //! // - Read and decompress a stream with a seek table -

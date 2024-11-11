@@ -9,15 +9,13 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 /// Other implementations:
 ///
 /// - sync I/O: [`crate::table::read_seek_table`]
-/// - `futures`: [`crate::table::futures::read_seek_table`]
-///
-/// After calling this function, **the reader will be at an unspecified
-/// position**. Consider seeking the reader back to the start after this
-/// function returns.
+/// - `futures`: [`crate::table::futures::read_seek_table`]`
 ///
 /// Returns `Ok(None)` if the stream doesn't apper to contain a seek table.
 /// Otherwise, returns `Err(_)` if the seek table could not be parsed or
-/// if an I/O error occurred while trying to read the seek table.
+/// if an I/O error occurred while trying to read the seek table. If it
+/// returns `Ok(_)`, it will also restore the reader to its original
+/// stream position.
 ///
 /// The seek table is returned as-is from the underlying reader. No attempt
 /// is made to validate that the seek table lines up with the underlying
@@ -27,6 +25,29 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 ///
 /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub async fn read_seek_table<R>(mut reader: R) -> std::io::Result<Option<ZstdSeekTable>>
+where
+    R: Unpin + tokio::io::AsyncRead + tokio::io::AsyncSeek,
+{
+    // Get the stream position, so we can restore it later
+    let initial_position = reader.stream_position().await?;
+
+    // Read the seek table
+    let seek_table_result = read_seek_table_inner(&mut reader).await;
+
+    // Try to restore the seek position, even if reading
+    // the seek table failed
+    let seek_result = reader
+        .seek(std::io::SeekFrom::Start(initial_position))
+        .await;
+
+    // If we got an error, return whichever we got first
+    let seek_table = seek_table_result?;
+    seek_result?;
+
+    Ok(seek_table)
+}
+
+async fn read_seek_table_inner<R>(mut reader: R) -> std::io::Result<Option<ZstdSeekTable>>
 where
     R: Unpin + tokio::io::AsyncRead + tokio::io::AsyncSeek,
 {

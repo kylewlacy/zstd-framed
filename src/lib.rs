@@ -121,8 +121,17 @@ pub mod writer;
 const SKIPPABLE_HEADER_MAGIC_BYTES: [u8; 4] = 0x184D2A5E_u32.to_le_bytes();
 const SEEKABLE_FOOTER_MAGIC_BYTES: [u8; 4] = 0x8F92EAB1_u32.to_le_bytes();
 
+/// Returns the outcome of trying to move some data, such as encoding or
+/// decoding a zstd stream.
 #[derive(Debug, Clone, Copy)]
 enum ZstdOutcome<T> {
+    /// The operation finished.
     Complete(T),
-    HasMore { remaining_bytes: usize },
+    /// The operation did not complete because more data still needs to
+    /// be moved.
+    HasMore {
+        /// A hint on how much more data needs to be moved for the operation
+        /// to complete.
+        remaining_bytes: usize,
+    },
 }

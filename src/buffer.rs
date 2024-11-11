@@ -1,12 +1,57 @@
 use crate::ZstdOutcome;
 
+/// A trait used to buffer data. Conceptually, a buffer starts empty,
+/// has some data written to it. The buffer holds that data while it's
+/// uncommitted, then something else commits that data e.g. by writing it
+/// to the outside world. Once all data has been committed, then the buffer
+/// is again empty.
+///
+/// See [FixedBuffer] for a minimal buffer implementation.
 pub trait Buffer {
+    /// Get the writable slice of the buffer.
     fn writable(&mut self) -> &mut [u8];
+
+    /// Mark the first `len` bytes as having been written to the writable
+    /// part of the buffer.
+    ///
+    /// ## Panics
+    ///
+    /// Implementations may panic if `len > self.writable().len()`.
     fn written(&mut self, len: usize);
+
+    /// Get the uncommitted slice of the buffer. This is data that has
+    /// been written to the buffer but not yet committed.
     fn uncommitted(&self) -> &[u8];
+
+    /// Mark the first `len` bytes as having been committed to the uncommitted
+    /// part of the buffer, e.g. because it was flushed to the outside world.
+    /// Implementations may then free the committed space to allow for
+    /// writing again.
+    ///
+    /// ## Panics
+    ///
+    /// Implementations may panic if `len > self.uncommitted().len()`.
     fn commit(&mut self, len: usize);
 }
 
+/// A [Buffer] that wraps some fixed-size array-like type, which uses two
+/// indices to track the writable, uncommitted, and commmitted parts of the
+/// buffer.
+///
+/// The type parameter `T` should implement [`AsRef<u8>`](core::convert::AsRef)
+/// and [`AsMut<u8>`](core::convert::AsMut)
+///
+/// The buffer will look like this internally:
+///
+/// ```plain
+/// |--------------------- buffer ---------------------|
+/// |-- (committed) --|-- uncommitted --|-- writable --|
+///                 ^ head            ^ tail
+/// ```
+///
+/// - When data is written to the buffer, `tail` is bumped forward
+/// - When data is committed from the buffer, `head` is bumped forward
+/// - Once all data is committed, then `head` and `tail` are reset
 pub struct FixedBuffer<T> {
     buffer: T,
     head: usize,
@@ -53,22 +98,30 @@ where
     }
 }
 
-pub fn write_to_buffer(buffer: &mut impl Buffer, data: &[u8]) -> usize {
-    let writable = buffer.writable();
-    let write_len = writable.len().min(data.len());
+/// Copy data from `src` into the `dst` buffer, capped to the buffer's
+/// available write capacity. Returns the number of bytes copied from `src`.
+pub fn copy_from_slice(src: &[u8], dst: &mut impl Buffer) -> usize {
+    let writable = dst.writable();
+    let write_len = writable.len().min(src.len());
 
-    writable[..write_len].copy_from_slice(&data[..write_len]);
-    buffer.written(write_len);
+    writable[..write_len].copy_from_slice(&src[..write_len]);
+    dst.written(write_len);
 
     write_len
 }
 
-pub fn write_all_to_buffer(buffer: &mut impl Buffer, data: &[u8]) {
-    let written = write_to_buffer(buffer, data);
+/// Write all data from `src` into the `dst` buffer. Panics if the buffer
+/// doesn't have enough capacity to copy all bytes.
+pub fn copy_all_from_slice(src: &[u8], dst: &mut impl Buffer) {
+    let written = copy_from_slice(src, dst);
 
-    assert_eq!(data.len(), written, "could not write all data to buffer");
+    assert_eq!(src.len(), written, "could not write all data to buffer");
 }
 
+/// Move all uncommitted data from the `src` buffer into the `dst` buffer.
+/// Returns [`Complete(())`](ZstdOutcome::Complete) if all data was
+/// written, or [`HasMore(_)`](ZstdOutcome::HasMore) with the number of
+/// uncommitted bytes left in `src`.
 pub fn move_buffer(src: &mut impl Buffer, dst: &mut impl Buffer) -> ZstdOutcome<()> {
     let src_uncommitted = src.uncommitted();
     let dst_writable = dst.writable();
@@ -89,6 +142,9 @@ pub fn move_buffer(src: &mut impl Buffer, dst: &mut impl Buffer) -> ZstdOutcome<
     }
 }
 
+/// Call a function that uses a [`zstd::stream::raw::OutBuffer`] by wrapping
+/// a [`Buffer`]. Returns a tuple containing the function's output and the
+/// total uncommitted bytes written to the buffer during the function call.
 pub fn with_zstd_out_buffer<R>(
     buffer: &mut impl Buffer,
     f: impl FnOnce(&mut zstd::stream::raw::OutBuffer<'_, [u8]>) -> R,

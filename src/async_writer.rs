@@ -101,6 +101,8 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         Ok(())
     }
 
+    /// Write all uncommitted buffered data to the underlying writer. After
+    /// returning `Ok(_)``, `self.buffer` will be empty.
     #[cfg(feature = "tokio")]
     fn flush_uncommitted_tokio(
         self: std::pin::Pin<&mut Self>,
@@ -114,15 +116,21 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         let mut this = self.project();
 
         loop {
+            // Get the uncommitted data to write
             let uncommitted = this.buffer.uncommitted();
             if uncommitted.is_empty() {
+                // If there's no uncommitted data, we're done
                 return std::task::Poll::Ready(Ok(()));
             }
 
+            // Write the data to the underlying writer, and record it
+            // as committed
             let committed = ready!(this.writer.as_mut().poll_write(cx, uncommitted))?;
             this.buffer.commit(committed);
 
             if committed == 0 {
+                // The underlying reader didn't accept any more of our data
+
                 return std::task::Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "failed to write buffered data",
@@ -131,6 +139,8 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         }
     }
 
+    /// Write all uncommitted buffered data to the underlying writer. After
+    /// returning `Ok(_)`, `self.buffer` will be empty.
     #[cfg(feature = "futures")]
     fn flush_uncommitted_futures(
         self: std::pin::Pin<&mut Self>,
@@ -144,15 +154,21 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
         let mut this = self.project();
 
         loop {
+            // Get the uncommitted data to write
             let uncommitted = this.buffer.uncommitted();
             if uncommitted.is_empty() {
+                // If there's no uncommitted data, we're done
                 return std::task::Poll::Ready(Ok(()));
             }
 
+            // Write the data to the underlying writer, and record it
+            // as committed
             let committed = ready!(this.writer.as_mut().poll_write(cx, uncommitted))?;
             this.buffer.commit(committed);
 
             if committed == 0 {
+                // The underlying reader didn't accept any more of our data
+
                 return std::task::Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "failed to write buffered data",
@@ -173,15 +189,20 @@ where
         data: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         loop {
+            // Write all buffered data
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
             let this = self.as_mut().project();
 
+            // Encode the newly-written data
             let outcome = this.encoder.encode(data, this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // The encoder has more to do before data can be encoded
+                }
                 crate::ZstdOutcome::Complete(consumed) => {
+                    // We've now encoded some data to the buffer, so we're done
                     return std::task::Poll::Ready(Ok(consumed));
                 }
             }
@@ -193,22 +214,29 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         loop {
+            // Write all buffered data
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
             let this = self.as_mut().project();
 
+            // Flush any data from the encoder to the interal buffer
             let outcome = this.encoder.flush(this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // zstd still has more data to flush, so loop again
+                }
                 crate::ZstdOutcome::Complete(_) => {
+                    // No more data from the encoder
                     break;
                 }
             }
         }
 
+        // Write any newly buffered data from the encoder
         ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
+        // Flush the underlying writer
         let this = self.project();
         this.writer.poll_flush(cx)
     }
@@ -218,22 +246,29 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         loop {
+            // Flush any uncommitted data
             ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
 
             let this = self.as_mut().project();
 
+            // Shut down the encoder
             let outcome = this.encoder.shutdown(this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // Encoder still has more to write, so keep looping
+                }
                 crate::ZstdOutcome::Complete(_) => {
-                    ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
-
+                    // Encoder has nothing else to do, so we're done
                     break;
                 }
             }
         }
 
+        // Flush any final data from the encoder
+        ready!(self.as_mut().flush_uncommitted_tokio(cx))?;
+
+        // Shut down the underlying writer
         let this = self.project();
         this.writer.poll_shutdown(cx)
     }
@@ -250,15 +285,20 @@ where
         data: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         loop {
+            // Write all buffered data
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
             let this = self.as_mut().project();
 
+            // Encode the newly-written data
             let outcome = this.encoder.encode(data, this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // The encoder has more to do before data can be encoded
+                }
                 crate::ZstdOutcome::Complete(consumed) => {
+                    // We've now encoded some data to the buffer, so we're done
                     return std::task::Poll::Ready(Ok(consumed));
                 }
             }
@@ -270,22 +310,29 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         loop {
+            // Write all buffered data
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
             let this = self.as_mut().project();
 
+            // Flush any data from the encoder to the interal buffer
             let outcome = this.encoder.flush(this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // zstd still has more data to flush, so loop again
+                }
                 crate::ZstdOutcome::Complete(_) => {
+                    // No more data from the encoder
                     break;
                 }
             }
         }
 
+        // Write any newly buffered data from the encoder
         ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
+        // Flush the underlying writer
         let this = self.project();
         this.writer.poll_flush(cx)
     }
@@ -295,22 +342,29 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         loop {
+            // Flush any uncommitted data
             ready!(self.as_mut().flush_uncommitted_futures(cx))?;
 
             let this = self.as_mut().project();
 
+            // Shut down the encoder
             let outcome = this.encoder.shutdown(this.buffer)?;
 
             match outcome {
-                crate::ZstdOutcome::HasMore { .. } => {}
+                crate::ZstdOutcome::HasMore { .. } => {
+                    // Encoder still has more to write, so keep looping
+                }
                 crate::ZstdOutcome::Complete(_) => {
-                    ready!(self.as_mut().flush_uncommitted_futures(cx))?;
-
+                    // Encoder has nothing else to do, so we're done
                     break;
                 }
             }
         }
 
+        // Flush any final data from the encoder
+        ready!(self.as_mut().flush_uncommitted_futures(cx))?;
+
+        // Close the underlying writer
         let this = self.project();
         this.writer.poll_close(cx)
     }

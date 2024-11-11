@@ -92,36 +92,51 @@ where
     /// any errors will be ignored.
     pub fn shutdown(&mut self) -> std::io::Result<()> {
         loop {
+            // Flush any uncommitted data
             self.flush_uncommitted()?;
 
+            // Shut down the encoder
             let outcome = self.encoder.shutdown(&mut self.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
+                ZstdOutcome::HasMore { .. } => {
+                    // Encoder still has more to write, so keep looping
+                }
                 ZstdOutcome::Complete(_) => {
+                    // Encoder has nothing else to do, so we're done
                     break;
                 }
             }
         }
 
+        // Flush any final data from the encoder
         self.flush_uncommitted()?;
 
+        // Flush the underlying writer for good measure
         self.writer.flush()?;
 
         Ok(())
     }
 
+    /// Write all uncommitted buffered data to the underlying writer. After
+    /// returning `Ok(_)`, `self.buffer` will be empty.
     fn flush_uncommitted(&mut self) -> std::io::Result<()> {
         loop {
+            // Get the uncommitted data to write
             let uncommitted = self.buffer.uncommitted();
             if uncommitted.is_empty() {
+                // If there's no uncommitted data, we're done
                 return Ok(());
             }
 
+            // Write the data to the underlying writer, and record it
+            // as committed
             let committed = self.writer.write(uncommitted)?;
             self.buffer.commit(committed);
 
             if committed == 0 {
+                // The underlying reader didn't accept any more of our data
+
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "failed to write buffered data",
@@ -137,13 +152,18 @@ where
 {
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         loop {
+            // Write all buffered data
             self.flush_uncommitted()?;
 
+            // Encode the newly-written data
             let outcome = self.encoder.encode(data, &mut self.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
+                ZstdOutcome::HasMore { .. } => {
+                    // The encoder has more to do before data can be encoded
+                }
                 ZstdOutcome::Complete(consumed) => {
+                    // We've now encoded some data to the buffer, so we're done
                     return Ok(consumed);
                 }
             }
@@ -152,20 +172,27 @@ where
 
     fn flush(&mut self) -> std::io::Result<()> {
         loop {
+            // Write all buffered data
             self.flush_uncommitted()?;
 
+            // Flush any data from the encoder to the interal buffer
             let outcome = self.encoder.flush(&mut self.buffer)?;
 
             match outcome {
-                ZstdOutcome::HasMore { .. } => {}
+                ZstdOutcome::HasMore { .. } => {
+                    // zstd still has more data to flush, so loop again
+                }
                 ZstdOutcome::Complete(_) => {
+                    // No more data from the encoder
                     break;
                 }
             }
         }
 
+        // Write any newly buffered data from the encoder
         self.flush_uncommitted()?;
 
+        // Flush the underlying writer
         self.writer.flush()
     }
 }
@@ -175,6 +202,7 @@ where
     W: std::io::Write,
 {
     fn drop(&mut self) {
+        // Try to shut down the writer
         let _ = self.shutdown();
     }
 }

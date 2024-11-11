@@ -91,12 +91,17 @@ impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
 }
 
 impl<'dict, R> ZstdReader<'dict, R> {
+    /// Jump forward, decoding and consuming `length` decompressed bytes
+    /// from the zstd stream.
     fn jump_forward(&mut self, mut length: u64) -> std::io::Result<()>
     where
         R: std::io::BufRead,
     {
         while length > 0 {
+            // Decode some data from the underyling reader
             let decoded = self.fill_buf()?;
+
+            // Return an error if we don't have any more data to decode
             if decoded.is_empty() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
@@ -104,34 +109,42 @@ impl<'dict, R> ZstdReader<'dict, R> {
                 ));
             }
 
-            let decoded_len: u64 = decoded.len().try_into().map_err(std::io::Error::other)?;
+            // Consume the data (up to the remaining length we should jump)
+            let decoded_len = u64::try_from(decoded.len()).map_err(std::io::Error::other)?;
             let consumed_len = decoded_len.min(length);
+            let consumed_len_usize =
+                usize::try_from(consumed_len).map_err(std::io::Error::other)?;
 
-            let consumed_len_usize: usize =
-                consumed_len.try_into().map_err(std::io::Error::other)?;
             self.consume(consumed_len_usize);
 
+            // Keep iterating until we've consumed enough to reach our target
             length -= consumed_len;
         }
 
         Ok(())
     }
 
-    fn jump_to_end(&mut self) -> std::io::Result<u64>
+    /// Decode and consume the entire zstd stream until reaching the end.
+    /// Stops when reaching EOF (i.e. the underlying reader had no more data)
+    fn jump_to_end(&mut self) -> std::io::Result<()>
     where
         R: std::io::BufRead,
     {
         loop {
+            // Decode some data from the underlying reader
             let decoded = self.fill_buf()?;
+
+            // If we didn't get any more data, we're done
             if decoded.is_empty() {
                 break;
             }
 
+            // Consume all the decoded data
             let decoded_len = decoded.len();
             self.consume(decoded_len);
         }
 
-        Ok(self.current_pos)
+        Ok(())
     }
 }
 
@@ -144,10 +157,18 @@ where
             return Ok(0);
         }
 
+        // Decode some data from the underlying reader
         let filled = self.fill_buf()?;
+
+        // Get some of the decoded data, capped to `buf`'s length
         let consumable = filled.len().min(buf.len());
+
+        // Copy the decoded data to `buf`
         buf[..consumable].copy_from_slice(&filled[..consumable]);
+
+        // Consume the copied data
         self.consume(consumable);
+
         Ok(consumable)
     }
 }
@@ -158,26 +179,38 @@ where
 {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
         loop {
+            // Check if our buffer contais any data we can return
             if !self.buffer.uncommitted().is_empty() {
+                // If it does, we're done
                 break;
             }
 
+            // Get some data from the underlying reader
             let decodable = self.reader.fill_buf()?;
             if decodable.is_empty() {
+                // If the underlying reader doesn't have any more data,
+                // then we're done
                 break;
             }
 
+            // Decode the data, and write it to `self.buffer`
             let consumed = self.decoder.decode(decodable, &mut self.buffer)?;
+
+            // Tell the underlying reader that we read the subset of
+            // data we decoded
             self.reader.consume(consumed);
         }
 
+        // Return all the data we have in `self.buffer`
         Ok(self.buffer.uncommitted())
     }
 
     fn consume(&mut self, amt: usize) {
+        // Tell the buffer that we've committed the data that was consumed
         self.buffer.commit(amt);
 
-        let amt_u64: u64 = amt.try_into().unwrap();
+        // Advance the reader's position
+        let amt_u64 = u64::try_from(amt).unwrap();
         self.current_pos += amt_u64;
     }
 }
@@ -187,30 +220,52 @@ where
     R: std::io::BufRead + std::io::Seek,
 {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        // Get the target position relative to the stream start
         let target_pos = match pos {
-            std::io::SeekFrom::Start(offset) => offset,
+            std::io::SeekFrom::Start(offset) => {
+                // Position is already relative to the start
+                offset
+            }
             std::io::SeekFrom::End(offset) => {
-                let end_pos = self.jump_to_end()?;
-                end_pos
+                // Jump to the end of the stream
+                self.jump_to_end()?;
+
+                // The current position is now at the end, so
+                // add the end offset
+                self.current_pos
                     .checked_add_signed(offset)
                     .ok_or_else(|| std::io::Error::other("invalid seek offset"))?
             }
-            std::io::SeekFrom::Current(offset) => self
-                .current_pos
-                .checked_add_signed(offset)
-                .ok_or_else(|| std::io::Error::other("invalid seek offset"))?,
+            std::io::SeekFrom::Current(offset) => {
+                // Add the offset to the current position
+                self.current_pos
+                    .checked_add_signed(offset)
+                    .ok_or_else(|| std::io::Error::other("invalid seek offset"))?
+            }
         };
 
+        // Consume any leftover data in `self.buffer`. This ensures that
+        // the current position is in line with the underlying decoder
         self.consume(self.buffer.uncommitted().len());
 
+        // Determine what we need to do to reach the target position
         let seek = self.decoder.prepare_seek_to_decompressed_pos(target_pos);
+
         if let Some(frame) = seek.seek_to_frame_start {
+            // We need to seek to the start of a frame
+
+            // Seek the underlying reader
             self.reader
                 .seek(std::io::SeekFrom::Start(frame.compressed_pos))?;
+
+            // Update the decoder based on what frame we're now at
             self.decoder.seeked_to_frame(frame)?;
+
+            // Update our internal position to align with the start of the frame
             self.current_pos = frame.decompressed_pos;
         }
 
+        // Seek the remaining distance (if any) to reach the target position
         self.jump_forward(seek.decompress_len)?;
 
         assert_eq!(self.current_pos, target_pos);

@@ -126,50 +126,62 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
         }
     }
 
+    /// Decode and consume the entire zstd stream until reaching the end.
+    /// Stops when reaching EOF (i.e. the underlying reader had no more data)
     #[cfg(feature = "tokio")]
     fn poll_jump_to_end_tokio(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<u64>>
+    ) -> std::task::Poll<std::io::Result<()>>
     where
         R: tokio::io::AsyncBufRead,
     {
         use tokio::io::AsyncBufRead as _;
 
         loop {
+            // Decode some data from the underlying reader
             let decoded = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+            // If we didn't get any more data, we're done
             if decoded.is_empty() {
                 break;
             }
 
+            // Consume all the decoded data
             let decoded_len = decoded.len();
             self.as_mut().consume(decoded_len);
         }
 
-        std::task::Poll::Ready(Ok(self.current_pos))
+        std::task::Poll::Ready(Ok(()))
     }
 
+    /// Decode and consume the entire zstd stream until reaching the end.
+    /// Stops when reaching EOF (i.e. the underlying reader had no more data)
     #[cfg(feature = "futures")]
     fn poll_jump_to_end_futures(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<u64>>
+    ) -> std::task::Poll<std::io::Result<()>>
     where
         R: futures::AsyncBufRead,
     {
         use futures::AsyncBufRead as _;
 
         loop {
+            // Decode some data from the underlying reader
             let decoded = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+            // If we didn't get any more data, we're done
             if decoded.is_empty() {
                 break;
             }
 
+            // Consume all the decoded data
             let decoded_len = decoded.len();
             self.as_mut().consume(decoded_len);
         }
 
-        std::task::Poll::Ready(Ok(self.current_pos))
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -187,19 +199,29 @@ where
         loop {
             let mut this = self.as_mut().project();
 
+            // Check if our buffer contais any data we can return
             if !this.buffer.uncommitted().is_empty() {
+                // If it does, we're done
                 break;
             }
 
+            // Get some data from the underlying reader
             let decodable = ready!(this.reader.as_mut().poll_fill_buf(cx))?;
             if decodable.is_empty() {
+                // If the underlying reader doesn't have any more data,
+                // then we're done
                 break;
             }
 
+            // Decode the data, and write it to `self.buffer`
             let consumed = this.decoder.decode(decodable, this.buffer)?;
+
+            // Tell the underlying reader that we read the subset of
+            // data we decoded
             this.reader.consume(consumed);
         }
 
+        // Return all the data we have in `self.buffer`
         std::task::Poll::Ready(Ok(self.project().buffer.uncommitted()))
     }
 
@@ -208,8 +230,10 @@ where
 
         let this = self.project();
 
+        // Tell the buffer that we've committed the data that was consumed
         this.buffer.commit(amt);
 
+        // Advance the reader's position
         let amt_u64: u64 = amt.try_into().unwrap();
         *this.current_pos += amt_u64;
     }
@@ -227,10 +251,18 @@ where
     ) -> std::task::Poll<std::io::Result<()>> {
         use tokio::io::AsyncBufRead as _;
 
+        // Decode some data from the underlying reader
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+        // Get some of the decoded data, capped to `buf`'s length
         let consumable = filled.len().min(buf.remaining());
+
+        // Copy the decoded data to `buf`
         buf.put_slice(&filled[..consumable]);
+
+        // Consume the copied data
         self.consume(consumable);
+
         std::task::Poll::Ready(Ok(()))
     }
 }
@@ -249,19 +281,29 @@ where
         loop {
             let mut this = self.as_mut().project();
 
+            // Check if our buffer contais any data we can return
             if !this.buffer.uncommitted().is_empty() {
+                // If it does, we're done
                 break;
             }
 
+            // Get some data from the underlying reader
             let decodable = ready!(this.reader.as_mut().poll_fill_buf(cx))?;
             if decodable.is_empty() {
+                // If the underlying reader doesn't have any more data,
+                // then we're done
                 break;
             }
 
+            // Decode the data, and write it to `self.buffer`
             let consumed = this.decoder.decode(decodable, this.buffer)?;
+
+            // Tell the underlying reader that we read the subset of
+            // data we decoded
             this.reader.consume(consumed);
         }
 
+        // Return all the data we have in `self.buffer`
         std::task::Poll::Ready(Ok(self.project().buffer.uncommitted()))
     }
 
@@ -270,8 +312,10 @@ where
 
         let this = self.project();
 
+        // Tell the buffer that we've committed the data that was consumed
         this.buffer.commit(amt);
 
+        // Advance the reader's position
         let amt_u64: u64 = amt.try_into().unwrap();
         *this.current_pos += amt_u64;
     }
@@ -293,10 +337,18 @@ where
             return std::task::Poll::Ready(Ok(0));
         }
 
+        // Decode some data from the underlying reader
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+        // Get some of the decoded data, capped to `buf`'s length
         let consumable = filled.len().min(buf.len());
+
+        // Copy the decoded data to `buf`
         buf[..consumable].copy_from_slice(&filled[..consumable]);
+
+        // Consume the copied data
         self.consume(consumable);
+
         std::task::Poll::Ready(Ok(consumable))
     }
 }
@@ -340,6 +392,9 @@ pin_project_lite::pin_project! {
 }
 
 impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
+    /// If a seek operation was started with [`tokio::io::AsyncSeek::start_seek`]
+    /// but wasn't polled to completion, "undo" the seek by seeking
+    /// back to where we were in the zstd stream.
     #[cfg(feature = "tokio")]
     fn poll_cancel_seek_tokio(
         self: std::pin::Pin<&mut Self>,
@@ -353,28 +408,44 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 
         let mut this = self.project();
 
+        // Iterate until `self.pending_seek` is unset. Each iteration
+        // should make some progress based on the current pending seek
+        // state (or should return `Poll::Pending`)
         loop {
             let Some(pending_seek) = *this.pending_seek else {
+                // No pending seek, which means we're done!
                 return std::task::Poll::Ready(Ok(()));
             };
 
             match pending_seek.state {
                 PendingSeekState::Starting => {
+                    // Seek just started. There's nothing to undo, so
+                    // just clear the pending seek
                     *this.pending_seek = None;
                 }
                 PendingSeekState::JumpingToEnd { .. }
                 | PendingSeekState::SeekingToTarget { .. }
                 | PendingSeekState::SeekingToFrame { .. }
                 | PendingSeekState::JumpingForward { .. } => {
+                    // Seek is in progress
+
+                    // Consume any leftover data in `self.buffer`. This ensures
+                    // that the current position is in line with the
+                    // underlying decoder
                     let consumable = this.reader.buffer.uncommitted().len();
                     this.reader.as_mut().consume(consumable);
 
+                    // Determine what we need to do to reach the target position
                     let seek = this
                         .reader
                         .decoder
                         .prepare_seek_to_decompressed_pos(pending_seek.initial_pos);
 
                     if let Some(frame) = seek.seek_to_frame_start {
+                        // We need to seek to the start of a frame
+
+                        // Transition the state to indicate we're seeking
+                        // to the start of a frame
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::RestoringSeekToFrame {
                                 frame,
@@ -383,6 +454,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                             ..pending_seek
                         });
 
+                        // Submit a seek job to the underlying reader
                         let reader = this.reader.as_mut().project().reader;
                         let result =
                             reader.start_seek(std::io::SeekFrom::Start(frame.compressed_pos));
@@ -390,6 +462,8 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         match result {
                             Ok(_) => {}
                             Err(error) => {
+                                // Trying to seek the underlying reader
+                                // failed, so clear the pending seek and bail
                                 *this.pending_seek = None;
                                 return std::task::Poll::Ready(Err(std::io::Error::other(
                                     format!("failed to cancel in-progress zstd seek: {error}"),
@@ -397,6 +471,11 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                             }
                         }
                     } else {
+                        // We just need to keep decompressing to reach the
+                        // target position
+
+                        // Transition to a state to indicate how many
+                        // bytes we need to consume
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::RestoringJumpForward {
                                 decompress_len: seek.decompress_len,
@@ -409,11 +488,20 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     frame,
                     decompress_len,
                 } => {
+                    // We're in the process of restoring to the previous
+                    // seek position, and need to seek to the start of
+                    // a frame
+
                     let reader = this.reader.as_mut().project();
+
+                    // Poll until the seek completes
                     let result = ready!(reader.reader.poll_complete(cx));
+
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Seeking the underlying reader failed, so
+                            // clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -421,12 +509,16 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         }
                     }
 
+                    // Update our internal position to align with the start of the frame
                     *reader.current_pos = frame.decompressed_pos;
 
+                    // Update the decoder based on what frame we're now at
                     let result = reader.decoder.seeked_to_frame(frame);
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Error from the decoder, so clear the pending
+                            // seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -434,20 +526,32 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         }
                     }
 
+                    // Update our state to decompress as much data as we
+                    // need to reach the initial position again
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::RestoringJumpForward { decompress_len },
                         ..pending_seek
                     });
                 }
                 PendingSeekState::RestoringJumpForward { decompress_len: 0 } => {
+                    // We finished getting back to the initial position!
+                    // Clear the pending seek
+
                     assert_eq!(pending_seek.initial_pos, this.reader.current_pos);
                     *this.pending_seek = None;
                 }
                 PendingSeekState::RestoringJumpForward { decompress_len } => {
+                    // We have to decompress some data to reach the initial
+                    // position
+
+                    // Try to decompress some data from the underlying
+                    // reader
                     let result = ready!(this.reader.as_mut().poll_fill_buf(cx));
                     let filled = match result {
                         Ok(filled) => filled,
                         Err(error) => {
+                            // Failed to decompress from the underlying
+                            // reader, so clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -456,6 +560,10 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     };
 
                     if filled.is_empty() {
+                        // The underlying reader didn't give us any data, which
+                        // means we hit EOF while trying to get back to the
+                        // initial position. Clear the pending seek and bail
+
                         *this.pending_seek = None;
                         return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -463,11 +571,15 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         )));
                     }
 
+                    // Consume as much data as we can to try and reach
+                    // the total data to decompress
                     let filled_len_u64: u64 = filled.len().try_into().unwrap();
                     let jump_len = filled_len_u64.min(decompress_len);
                     let jump_len_usize: usize = jump_len.try_into().unwrap();
                     this.reader.as_mut().consume(jump_len_usize);
 
+                    // Update the state based on how much more data
+                    // we have left to decompress
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::RestoringJumpForward {
                             decompress_len: decompress_len - jump_len,
@@ -479,6 +591,9 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
         }
     }
 
+    /// If a seek operation was started with [`futures::AsyncSeek::poll_seek`]
+    /// but wasn't polled to completion, "undo" the seek by seeking
+    /// back to where we were in the zstd stream.
     #[cfg(feature = "futures")]
     fn poll_cancel_seek_futures(
         self: std::pin::Pin<&mut Self>,
@@ -492,28 +607,44 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 
         let mut this = self.project();
 
+        // Iterate until `self.pending_seek` is unset. Each iteration
+        // should make some progress based on the current pending seek
+        // state (or should return `Poll::Pending`)
         loop {
             let Some(pending_seek) = *this.pending_seek else {
+                // No pending seek, which means we're done!
                 return std::task::Poll::Ready(Ok(()));
             };
 
             match pending_seek.state {
                 PendingSeekState::Starting => {
+                    // Seek just started. There's nothing to undo, so
+                    // just clear the pending seek
                     *this.pending_seek = None;
                 }
                 PendingSeekState::JumpingToEnd { .. }
                 | PendingSeekState::SeekingToTarget { .. }
                 | PendingSeekState::SeekingToFrame { .. }
                 | PendingSeekState::JumpingForward { .. } => {
+                    // Seek is in progress
+
+                    // Consume any leftover data in `self.buffer`. This ensures
+                    // that the current position is in line with the
+                    // underlying decoder
                     let consumable = this.reader.buffer.uncommitted().len();
                     this.reader.as_mut().consume(consumable);
 
+                    // Determine what we need to do to reach the target position
                     let seek = this
                         .reader
                         .decoder
                         .prepare_seek_to_decompressed_pos(pending_seek.initial_pos);
 
                     if let Some(frame) = seek.seek_to_frame_start {
+                        // We need to seek to the start of a frame
+
+                        // Transition the state to indicate we're seeking
+                        // to the start of a frame
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::RestoringSeekToFrame {
                                 frame,
@@ -522,6 +653,11 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                             ..pending_seek
                         });
                     } else {
+                        // We just need to keep decompressing to reach the
+                        // target position
+
+                        // Transition to a state to indicate how many
+                        // bytes we need to consume
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::RestoringJumpForward {
                                 decompress_len: seek.decompress_len,
@@ -534,13 +670,22 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     frame,
                     decompress_len,
                 } => {
+                    // We're in the process of restoring to the previous
+                    // seek position, and need to seek to the start of
+                    // a frame
+
                     let reader = this.reader.as_mut().project();
+
+                    // Poll until we finish seeking the underlying reader
                     let result = ready!(reader
                         .reader
                         .poll_seek(cx, std::io::SeekFrom::Start(frame.compressed_pos)));
+
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Seeking the underlying reader failed, so
+                            // clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -548,12 +693,16 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         }
                     }
 
+                    // Update our internal position to align with the start of the frame
                     *reader.current_pos = frame.decompressed_pos;
 
+                    // Update the decoder based on what frame we're now at
                     let result = reader.decoder.seeked_to_frame(frame);
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Error from the decoder, so clear the pending
+                            // seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -561,20 +710,32 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         }
                     }
 
+                    // Update our state to decompress as much data as we
+                    // need to reach the initial position again
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::RestoringJumpForward { decompress_len },
                         ..pending_seek
                     });
                 }
                 PendingSeekState::RestoringJumpForward { decompress_len: 0 } => {
+                    // We finished getting back to the initial position!
+                    // Clear the pending seek
+
                     assert_eq!(pending_seek.initial_pos, this.reader.current_pos);
                     *this.pending_seek = None;
                 }
                 PendingSeekState::RestoringJumpForward { decompress_len } => {
+                    // We have to decompress some data to reach the initial
+                    // position
+
+                    // Try to decompress some data from the underlying
+                    // reader
                     let result = ready!(this.reader.as_mut().poll_fill_buf(cx));
                     let filled = match result {
                         Ok(filled) => filled,
                         Err(error) => {
+                            // Failed to decompress from the underlying
+                            // reader, so clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(format!(
                                 "failed to cancel in-progress zstd seek: {error}"
@@ -583,6 +744,10 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     };
 
                     if filled.is_empty() {
+                        // The underlying reader didn't give us any data, which
+                        // means we hit EOF while trying to get back to the
+                        // initial position. Clear the pending seek and bail
+
                         *this.pending_seek = None;
                         return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -590,11 +755,15 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                         )));
                     }
 
+                    // Consume as much data as we can to try and reach
+                    // the total data to decompress
                     let filled_len_u64: u64 = filled.len().try_into().unwrap();
                     let jump_len = filled_len_u64.min(decompress_len);
                     let jump_len_usize: usize = jump_len.try_into().unwrap();
                     this.reader.as_mut().consume(jump_len_usize);
 
+                    // Update the state based on how much more data
+                    // we have left to decompress
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::RestoringJumpForward {
                             decompress_len: decompress_len - jump_len,
@@ -616,8 +785,10 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<&[u8]>> {
+        // Cancel any in-progress seeks
         ready!(self.as_mut().poll_cancel_seek_tokio(cx))?;
 
+        // Defer to the underlying implementation
         let this = self.project();
         this.reader.poll_fill_buf(cx)
     }
@@ -625,11 +796,14 @@ where
     fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         let this = self.project();
 
+        // Ensure we aren't trying to seek before removing any
+        // data from the buffer
         assert!(
             this.pending_seek.is_none(),
             "tried to consume from buffer while seeking"
         );
 
+        // Defer to the underlying implementation
         this.reader.consume(amt);
     }
 }
@@ -646,10 +820,18 @@ where
     ) -> std::task::Poll<std::io::Result<()>> {
         use tokio::io::AsyncBufRead as _;
 
+        // Decode some data from the underlying reader
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+        // Get some of the decoded data, capped to `buf`'s length
         let consumable = filled.len().min(buf.remaining());
+
+        // Copy the decoded data to `buf`
         buf.put_slice(&filled[..consumable]);
+
+        // Consume the copied data
         self.consume(consumable);
+
         std::task::Poll::Ready(Ok(()))
     }
 }
@@ -664,10 +846,13 @@ where
         position: std::io::SeekFrom,
     ) -> std::io::Result<()> {
         let mut this = self.project();
+
+        // Ensure there isn't another seek in progress first
         if this.pending_seek.is_some() {
             return Err(std::io::Error::other("seek already in progress"));
         }
 
+        // Transition to the "starting" seek state
         *this.pending_seek = Some(PendingSeek {
             initial_pos: this.reader.as_mut().current_pos,
             seek: position,
@@ -683,6 +868,9 @@ where
         use crate::buffer::Buffer as _;
         use tokio::io::AsyncBufRead as _;
 
+        // Iterate until `self.pending_seek` is unset. Each iteration
+        // should make some progress based on the current pending seek
+        // state (or should return `Poll::Pending`)
         loop {
             let mut this = self.as_mut().project();
 
@@ -691,51 +879,78 @@ where
             };
 
             match pending_seek.state {
-                PendingSeekState::Starting => match pending_seek.seek {
-                    std::io::SeekFrom::Start(offset) => {
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::SeekingToTarget { target_pos: offset },
-                            ..pending_seek
-                        });
-                    }
-                    std::io::SeekFrom::End(end_offset) => {
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::JumpingToEnd { end_offset },
-                            ..pending_seek
-                        });
-                    }
-                    std::io::SeekFrom::Current(offset) => {
-                        let offset = this.reader.current_pos.checked_add_signed(offset);
-                        let offset = match offset {
-                            Some(offset) => offset,
-                            None => {
-                                *this.pending_seek = None;
-                                return std::task::Poll::Ready(Err(std::io::Error::other(
-                                    "invalid seek offset",
-                                )));
-                            }
-                        };
+                PendingSeekState::Starting => {
+                    // Seek is starting. The first step is to determine
+                    // the seek target relative to the start of the stream
 
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::SeekingToTarget { target_pos: offset },
-                            ..pending_seek
-                        });
+                    match pending_seek.seek {
+                        std::io::SeekFrom::Start(offset) => {
+                            // The offset is already relatve to the start,
+                            // so transition to the state to start seeking
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::SeekingToTarget { target_pos: offset },
+                                ..pending_seek
+                            });
+                        }
+                        std::io::SeekFrom::End(end_offset) => {
+                            // To determine the offset relative to the start,
+                            // we first need to reach the end of the stream.
+                            // So, transition to the state to jump to the
+                            // end of the stream
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::JumpingToEnd { end_offset },
+                                ..pending_seek
+                            });
+                        }
+                        std::io::SeekFrom::Current(offset) => {
+                            // Compute the offset relative to the current position
+                            let offset = this.reader.current_pos.checked_add_signed(offset);
+                            let offset = match offset {
+                                Some(offset) => offset,
+                                None => {
+                                    // Offset overflowed, so clear the pending
+                                    // seek and return an error
+                                    *this.pending_seek = None;
+                                    return std::task::Poll::Ready(Err(std::io::Error::other(
+                                        "invalid seek offset",
+                                    )));
+                                }
+                            };
+
+                            // Transition to the state to start seeking based
+                            // on the computed offset
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::SeekingToTarget { target_pos: offset },
+                                ..pending_seek
+                            });
+                        }
                     }
-                },
+                }
                 PendingSeekState::JumpingToEnd { end_offset } => {
-                    let result = ready!(this.reader.poll_jump_to_end_tokio(cx));
-                    let end_pos = match result {
-                        Ok(end_pos) => end_pos,
+                    // Seek target is relative to the end of the stream, so
+                    // we need to jump to the end of the stream before
+                    // determing the target position
+
+                    // Try to jump to the end of stream
+                    let result = ready!(this.reader.as_mut().poll_jump_to_end_tokio(cx));
+                    match result {
+                        Ok(_) => {}
                         Err(error) => {
+                            // Jumping to the end failed, so cancel the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
-                    let target_pos = end_pos.checked_add_signed(end_offset);
+                    // Now we're at the end of the stream, so we can now
+                    // compute the target position
+                    let target_pos = this.reader.current_pos.checked_add_signed(end_offset);
                     let target_pos = match target_pos {
                         Some(target_pos) => target_pos,
                         None => {
+                            // Target position overflowed, so cancel the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(
                                 "invalid seek offset",
@@ -743,21 +958,33 @@ where
                         }
                     };
 
+                    // Transition to the state to start seeking based
+                    // on the computed offset
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::SeekingToTarget { target_pos },
                         ..pending_seek
                     });
                 }
                 PendingSeekState::SeekingToTarget { target_pos } => {
+                    // We now know the relative position we're seeking to
+
+                    // Consume any leftover data in `self.buffer`. This ensures
+                    // that the current position is in line with the
+                    // underlying decoder
                     let consumable = this.reader.buffer.uncommitted().len();
                     this.reader.as_mut().consume(consumable);
 
+                    // Determine what we need to do to reach the target position
                     let seek = this
                         .reader
                         .decoder
                         .prepare_seek_to_decompressed_pos(target_pos);
 
                     if let Some(frame) = seek.seek_to_frame_start {
+                        // We need to seek to the start of a frame
+
+                        // Transition to the state so we poll until
+                        // the seek completes
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::SeekingToFrame {
                                 target_pos,
@@ -768,17 +995,27 @@ where
                         });
 
                         let reader = this.reader.as_mut().project().reader;
+
+                        // Start a job to seek the underlying reader
                         let result =
                             reader.start_seek(std::io::SeekFrom::Start(frame.compressed_pos));
 
                         match result {
                             Ok(_) => {}
                             Err(error) => {
+                                // Trying to seek the underlying reader
+                                // failed, so clear the in-progress seek
+                                // and bail
                                 *this.pending_seek = None;
                                 return std::task::Poll::Ready(Err(error));
                             }
                         }
                     } else {
+                        // We need to keep decoding bytes to reach the
+                        // target position
+
+                        // Transition to the state so that we can keep
+                        // decompressing until reaching the target position
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::JumpingForward {
                                 target_pos,
@@ -793,27 +1030,40 @@ where
                     frame,
                     decompress_len,
                 } => {
+                    // We're seeking to the start of a frame
+
                     let reader = this.reader.as_mut().project();
+
+                    // Poll until the underlying reader finishes seeking
                     let result = ready!(reader.reader.poll_complete(cx));
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Seeking the underlying reader failed,
+                            // so clear the in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
+                    // Update the decoder based on what frame we're now at
                     let result = reader.decoder.seeked_to_frame(frame);
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // The decoder failed, so clear the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     }
 
+                    // Update our internal position to align with the
+                    // start of the frame
                     *reader.current_pos = frame.decompressed_pos;
 
+                    // Seek complete, so transition states to decompress
+                    // until reaching the target position
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::JumpingForward {
                             target_pos,
@@ -826,6 +1076,8 @@ where
                     target_pos,
                     decompress_len: 0,
                 } => {
+                    // No more bytes to decompress, so at the target position!
+                    // Clear the pending seek
                     assert_eq!(target_pos, this.reader.current_pos);
                     *this.pending_seek = None;
                 }
@@ -833,16 +1085,26 @@ where
                     target_pos,
                     decompress_len,
                 } => {
+                    // We have some bytes to decompress before reaching
+                    // the target position
+
+                    // Try to decompress some data from the underlying
+                    // reader
                     let result = ready!(this.reader.as_mut().poll_fill_buf(cx));
                     let filled = match result {
                         Ok(filled) => filled,
                         Err(error) => {
+                            // Failed to decompress from the underlying
+                            // reader, so clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
                     if filled.is_empty() {
+                        // The underlying reader didn't give us any data, which
+                        // means we hit EOF while trying to seek. Clear the
+                        // pending seek and bail
                         *this.pending_seek = None;
                         return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -850,12 +1112,15 @@ where
                         )));
                     }
 
+                    // Consume as much data as we can to try and reach
+                    // the total data to decompress
                     let filled_len_u64: u64 = filled.len().try_into().unwrap();
                     let jump_len = filled_len_u64.min(decompress_len);
                     let jump_len_usize: usize = jump_len.try_into().unwrap();
-
                     this.reader.as_mut().consume(jump_len_usize);
 
+                    // Update the state based on how much more data
+                    // we have left to decompress
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::JumpingForward {
                             target_pos,
@@ -866,6 +1131,8 @@ where
                 }
                 PendingSeekState::RestoringSeekToFrame { .. }
                 | PendingSeekState::RestoringJumpForward { .. } => {
+                    // The seek was cancelled, so poll until the
+                    // cancellation finished then return an error
                     ready!(self.as_mut().poll_cancel_seek_tokio(cx))?;
                     return std::task::Poll::Ready(Err(std::io::Error::other("seek cancelled")));
                 }
@@ -883,8 +1150,10 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<&[u8]>> {
+        // Cancel any in-progress seeks
         ready!(self.as_mut().poll_cancel_seek_futures(cx))?;
 
+        // Defer to the underlying implementation
         let this = self.project();
         this.reader.poll_fill_buf(cx)
     }
@@ -892,11 +1161,14 @@ where
     fn consume(self: std::pin::Pin<&mut Self>, amt: usize) {
         let this = self.project();
 
+        // Ensure we aren't trying to seek before removing any
+        // data from the buffer
         assert!(
             this.pending_seek.is_none(),
             "tried to consume from buffer while seeking"
         );
 
+        // Defer to the underlying implementation
         this.reader.consume(amt);
     }
 }
@@ -913,10 +1185,18 @@ where
     ) -> std::task::Poll<std::io::Result<usize>> {
         use futures::AsyncBufRead as _;
 
+        // Decode some data from the underlying reader
         let filled = ready!(self.as_mut().poll_fill_buf(cx))?;
+
+        // Get some of the decoded data, capped to `buf`'s length
         let consumable = filled.len().min(buf.len());
+
+        // Copy the decoded data to `buf`
         buf[..consumable].copy_from_slice(&filled[..consumable]);
+
+        // Consume the copied data
         self.consume(consumable);
+
         std::task::Poll::Ready(Ok(consumable))
     }
 }
@@ -934,16 +1214,26 @@ where
         use crate::buffer::Buffer as _;
         use futures::io::AsyncBufRead as _;
 
+        // Iterate until the seek is complete. Each iteration should
+        // make some progress based on the current pending seek state
+        // (or should return `Poll::Pending`)
         loop {
             let this = self.as_mut().project();
 
             let pending_seek = match *this.pending_seek {
-                Some(pending_seek) if pending_seek.seek == position => pending_seek,
+                Some(pending_seek) if pending_seek.seek == position => {
+                    // We're already seeking with the same position,
+                    // so keep going from where we left off
+                    pending_seek
+                }
                 _ => {
+                    // If there's another seek operation in progress,
+                    // cancel it first
                     ready!(self.as_mut().poll_cancel_seek_futures(cx))?;
 
                     let this = self.as_mut().project();
 
+                    // Start a new seek operation
                     let pending_seek = PendingSeek {
                         initial_pos: this.reader.current_pos,
                         seek: position,
@@ -957,51 +1247,78 @@ where
             let mut this = self.as_mut().project();
 
             match pending_seek.state {
-                PendingSeekState::Starting => match pending_seek.seek {
-                    std::io::SeekFrom::Start(offset) => {
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::SeekingToTarget { target_pos: offset },
-                            ..pending_seek
-                        });
-                    }
-                    std::io::SeekFrom::End(end_offset) => {
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::JumpingToEnd { end_offset },
-                            ..pending_seek
-                        });
-                    }
-                    std::io::SeekFrom::Current(offset) => {
-                        let offset = this.reader.current_pos.checked_add_signed(offset);
-                        let offset = match offset {
-                            Some(offset) => offset,
-                            None => {
-                                *this.pending_seek = None;
-                                return std::task::Poll::Ready(Err(std::io::Error::other(
-                                    "invalid seek offset",
-                                )));
-                            }
-                        };
+                PendingSeekState::Starting => {
+                    // Seek is starting. The first step is to determine
+                    // the seek target relative to the start of the stream
 
-                        *this.pending_seek = Some(PendingSeek {
-                            state: PendingSeekState::SeekingToTarget { target_pos: offset },
-                            ..pending_seek
-                        });
+                    match pending_seek.seek {
+                        std::io::SeekFrom::Start(offset) => {
+                            // The offset is already relatve to the start,
+                            // so transition to the state to start seeking
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::SeekingToTarget { target_pos: offset },
+                                ..pending_seek
+                            });
+                        }
+                        std::io::SeekFrom::End(end_offset) => {
+                            // To determine the offset relative to the start,
+                            // we first need to reach the end of the stream.
+                            // So, transition to the state to jump to the
+                            // end of the stream
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::JumpingToEnd { end_offset },
+                                ..pending_seek
+                            });
+                        }
+                        std::io::SeekFrom::Current(offset) => {
+                            // Compute the offset relative to the current position
+                            let offset = this.reader.current_pos.checked_add_signed(offset);
+                            let offset = match offset {
+                                Some(offset) => offset,
+                                None => {
+                                    // Offset overflowed, so clear the pending
+                                    // seek and return an error
+                                    *this.pending_seek = None;
+                                    return std::task::Poll::Ready(Err(std::io::Error::other(
+                                        "invalid seek offset",
+                                    )));
+                                }
+                            };
+
+                            // Transition to the state to start seeking based
+                            // on the computed offset
+                            *this.pending_seek = Some(PendingSeek {
+                                state: PendingSeekState::SeekingToTarget { target_pos: offset },
+                                ..pending_seek
+                            });
+                        }
                     }
-                },
+                }
                 PendingSeekState::JumpingToEnd { end_offset } => {
-                    let result = ready!(this.reader.poll_jump_to_end_futures(cx));
-                    let end_pos = match result {
-                        Ok(end_pos) => end_pos,
+                    // Seek target is relative to the end of the stream, so
+                    // we need to jump to the end of the stream before
+                    // determing the target position
+
+                    // Try to jump to the end of stream
+                    let result = ready!(this.reader.as_mut().poll_jump_to_end_futures(cx));
+                    match result {
+                        Ok(_) => {}
                         Err(error) => {
+                            // Jumping to the end failed, so cancel the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
-                    let target_pos = end_pos.checked_add_signed(end_offset);
+                    // Now we're at the end of the stream, so we can now
+                    // compute the target position
+                    let target_pos = this.reader.current_pos.checked_add_signed(end_offset);
                     let target_pos = match target_pos {
                         Some(target_pos) => target_pos,
                         None => {
+                            // Target position overflowed, so cancel the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(std::io::Error::other(
                                 "invalid seek offset",
@@ -1009,21 +1326,33 @@ where
                         }
                     };
 
+                    // Transition to the state to start seeking based
+                    // on the computed offset
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::SeekingToTarget { target_pos },
                         ..pending_seek
                     });
                 }
                 PendingSeekState::SeekingToTarget { target_pos } => {
+                    // We now know the relative position we're seeking to
+
+                    // Consume any leftover data in `self.buffer`. This ensures
+                    // that the current position is in line with the
+                    // underlying decoder
                     let consumable = this.reader.buffer.uncommitted().len();
                     this.reader.as_mut().consume(consumable);
 
+                    // Determine what we need to do to reach the target position
                     let seek = this
                         .reader
                         .decoder
                         .prepare_seek_to_decompressed_pos(target_pos);
 
                     if let Some(frame) = seek.seek_to_frame_start {
+                        // We need to seek to the start of a frame
+
+                        // Transition to the state so we poll until
+                        // the seek completes
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::SeekingToFrame {
                                 target_pos,
@@ -1033,6 +1362,11 @@ where
                             ..pending_seek
                         });
                     } else {
+                        // We need to keep decoding bytes to reach the
+                        // target position
+
+                        // Transition to the state so that we can keep
+                        // decompressing until reaching the target position
                         *this.pending_seek = Some(PendingSeek {
                             state: PendingSeekState::JumpingForward {
                                 target_pos,
@@ -1047,29 +1381,42 @@ where
                     frame,
                     decompress_len,
                 } => {
+                    // We're seeking to the start of a frame
+
                     let reader = this.reader.as_mut().project();
+
+                    // Seek the underlying reader
                     let result = ready!(reader
                         .reader
                         .poll_seek(cx, std::io::SeekFrom::Start(frame.compressed_pos)));
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // Seeking the underlying reader failed,
+                            // so clear the in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
+                    // Update the decoder based on what frame we're now at
                     let result = reader.decoder.seeked_to_frame(frame);
                     match result {
                         Ok(_) => {}
                         Err(error) => {
+                            // The decoder failed, so clear the
+                            // in-progress seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     }
 
+                    // Update our internal position to align with the
+                    // start of the frame
                     *reader.current_pos = frame.decompressed_pos;
 
+                    // Seek complete, so transition states to decompress
+                    // until reaching the target position
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::JumpingForward {
                             target_pos,
@@ -1082,6 +1429,8 @@ where
                     target_pos,
                     decompress_len: 0,
                 } => {
+                    // No more bytes to decompress, so at the target position!
+                    // Clear the pending seek, then we're done
                     assert_eq!(target_pos, this.reader.current_pos);
                     *this.pending_seek = None;
                     return std::task::Poll::Ready(Ok(this.reader.current_pos));
@@ -1090,16 +1439,26 @@ where
                     target_pos,
                     decompress_len,
                 } => {
+                    // We have some bytes to decompress before reaching
+                    // the target position
+
+                    // Try to decompress some data from the underlying
+                    // reader
                     let result = ready!(this.reader.as_mut().poll_fill_buf(cx));
                     let filled = match result {
                         Ok(filled) => filled,
                         Err(error) => {
+                            // Failed to decompress from the underlying
+                            // reader, so clear the pending seek and bail
                             *this.pending_seek = None;
                             return std::task::Poll::Ready(Err(error));
                         }
                     };
 
                     if filled.is_empty() {
+                        // The underlying reader didn't give us any data, which
+                        // means we hit EOF while trying to seek. Clear the
+                        // pending seek and bail
                         *this.pending_seek = None;
                         return std::task::Poll::Ready(Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -1107,12 +1466,15 @@ where
                         )));
                     }
 
+                    // Consume as much data as we can to try and reach
+                    // the total data to decompress
                     let filled_len_u64: u64 = filled.len().try_into().unwrap();
                     let jump_len = filled_len_u64.min(decompress_len);
                     let jump_len_usize: usize = jump_len.try_into().unwrap();
-
                     this.reader.as_mut().consume(jump_len_usize);
 
+                    // Update the state based on how much more data
+                    // we have left to decompress
                     *this.pending_seek = Some(PendingSeek {
                         state: PendingSeekState::JumpingForward {
                             target_pos,
@@ -1123,6 +1485,8 @@ where
                 }
                 PendingSeekState::RestoringSeekToFrame { .. }
                 | PendingSeekState::RestoringJumpForward { .. } => {
+                    // The seek was cancelled, so poll until the
+                    // cancellation finished then return an error
                     ready!(self.as_mut().poll_cancel_seek_futures(cx))?;
                     return std::task::Poll::Ready(Err(std::io::Error::other("seek cancelled")));
                 }

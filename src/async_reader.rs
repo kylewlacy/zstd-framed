@@ -423,7 +423,8 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     // just clear the pending seek
                     *this.pending_seek = None;
                 }
-                PendingSeekState::JumpingToEnd { .. }
+                PendingSeekState::SeekingToLastFrame { .. }
+                | PendingSeekState::JumpingToEnd { .. }
                 | PendingSeekState::SeekingToTarget { .. }
                 | PendingSeekState::SeekingToFrame { .. }
                 | PendingSeekState::JumpingForward { .. } => {
@@ -622,7 +623,8 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
                     // just clear the pending seek
                     *this.pending_seek = None;
                 }
-                PendingSeekState::JumpingToEnd { .. }
+                PendingSeekState::SeekingToLastFrame { .. }
+                | PendingSeekState::JumpingToEnd { .. }
                 | PendingSeekState::SeekingToTarget { .. }
                 | PendingSeekState::SeekingToFrame { .. }
                 | PendingSeekState::JumpingForward { .. } => {
@@ -895,12 +897,51 @@ where
                         std::io::SeekFrom::End(end_offset) => {
                             // To determine the offset relative to the start,
                             // we first need to reach the end of the stream.
-                            // So, transition to the state to jump to the
-                            // end of the stream
-                            *this.pending_seek = Some(PendingSeek {
-                                state: PendingSeekState::JumpingToEnd { end_offset },
-                                ..pending_seek
-                            });
+
+                            // Determine the best way to reach the last
+                            // position we know about in the stream.
+                            let seek = this.reader.decoder.prepare_seek_to_last_known_pos();
+
+                            if let Some(frame) = seek.seek_to_frame_start {
+                                // We have a frame to seek to
+
+                                // Start a job to seek to the start
+                                // of the last known frame
+                                let reader = this.reader.as_mut().project().reader;
+                                let result = reader
+                                    .start_seek(std::io::SeekFrom::Start(frame.compressed_pos));
+
+                                match result {
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        // Trying to seek the underlying reader
+                                        // failed, so clear the pending seek and bail
+                                        *this.pending_seek = None;
+                                        return std::task::Poll::Ready(Err(std::io::Error::other(
+                                            format!(
+                                                "failed to cancel in-progress zstd seek: {error}"
+                                            ),
+                                        )));
+                                    }
+                                }
+
+                                // Transition to the state to seek before
+                                // jumping to the end of the stream
+                                *this.pending_seek = Some(PendingSeek {
+                                    state: PendingSeekState::SeekingToLastFrame {
+                                        frame,
+                                        end_offset,
+                                    },
+                                    ..pending_seek
+                                })
+                            } else {
+                                // No need to seek, so transition to the
+                                // state to jump to the end of the stream
+                                *this.pending_seek = Some(PendingSeek {
+                                    state: PendingSeekState::JumpingToEnd { end_offset },
+                                    ..pending_seek
+                                });
+                            }
                         }
                         std::io::SeekFrom::Current(offset) => {
                             // Compute the offset relative to the current position
@@ -925,6 +966,50 @@ where
                             });
                         }
                     }
+                }
+                PendingSeekState::SeekingToLastFrame { end_offset, frame } => {
+                    // We're seeking to the last (known) frame in the stream
+                    // before jumping to the end
+
+                    let reader = this.reader.as_mut().project();
+
+                    // Wait for the seek on the underlying reader to complete
+                    let result = ready!(reader.reader.poll_complete(cx));
+                    match result {
+                        Ok(_) => {}
+                        Err(error) => {
+                            // Seeking the underlying reader failed,
+                            // so clear the in-progress seek and bail
+                            *this.pending_seek = None;
+                            return std::task::Poll::Ready(Err(error));
+                        }
+                    };
+
+                    // Update the decoder based on what frame we're now at
+                    let result = reader.decoder.seeked_to_frame(frame);
+                    match result {
+                        Ok(_) => {}
+                        Err(error) => {
+                            // The decoder failed, so clear the
+                            // in-progress seek and bail
+                            *this.pending_seek = None;
+                            return std::task::Poll::Ready(Err(error));
+                        }
+                    }
+
+                    // Update our internal position to align with the
+                    // start of the frame
+                    *reader.current_pos = frame.decompressed_pos;
+
+                    // Clear the buffer
+                    reader.buffer.clear();
+
+                    // Seek complete, so transition states to jump to
+                    // the end of the stream
+                    *this.pending_seek = Some(PendingSeek {
+                        state: PendingSeekState::JumpingToEnd { end_offset },
+                        ..pending_seek
+                    });
                 }
                 PendingSeekState::JumpingToEnd { end_offset } => {
                     // Seek target is relative to the end of the stream, so
@@ -1263,12 +1348,30 @@ where
                         std::io::SeekFrom::End(end_offset) => {
                             // To determine the offset relative to the start,
                             // we first need to reach the end of the stream.
-                            // So, transition to the state to jump to the
-                            // end of the stream
-                            *this.pending_seek = Some(PendingSeek {
-                                state: PendingSeekState::JumpingToEnd { end_offset },
-                                ..pending_seek
-                            });
+
+                            // Determine the best way to reach the last
+                            // position we know about in the stream.
+                            let seek = this.reader.decoder.prepare_seek_to_last_known_pos();
+
+                            if let Some(frame) = seek.seek_to_frame_start {
+                                // We have a frame to seek to, so
+                                // transition to the state to seek before
+                                // jumping to the end of the stream
+                                *this.pending_seek = Some(PendingSeek {
+                                    state: PendingSeekState::SeekingToLastFrame {
+                                        frame,
+                                        end_offset,
+                                    },
+                                    ..pending_seek
+                                })
+                            } else {
+                                // No need to seek, so transition to the
+                                // state to jump to the end of the stream
+                                *this.pending_seek = Some(PendingSeek {
+                                    state: PendingSeekState::JumpingToEnd { end_offset },
+                                    ..pending_seek
+                                });
+                            }
                         }
                         std::io::SeekFrom::Current(offset) => {
                             // Compute the offset relative to the current position
@@ -1293,6 +1396,52 @@ where
                             });
                         }
                     }
+                }
+                PendingSeekState::SeekingToLastFrame { end_offset, frame } => {
+                    // We're seeking to the last (known) frame in the stream
+                    // before jumping to the end
+
+                    let reader = this.reader.as_mut().project();
+
+                    // Seek the underlying reader
+                    let result = ready!(reader
+                        .reader
+                        .poll_seek(cx, std::io::SeekFrom::Start(frame.compressed_pos)));
+                    match result {
+                        Ok(_) => {}
+                        Err(error) => {
+                            // Seeking the underlying reader failed,
+                            // so clear the in-progress seek and bail
+                            *this.pending_seek = None;
+                            return std::task::Poll::Ready(Err(error));
+                        }
+                    };
+
+                    // Update the decoder based on what frame we're now at
+                    let result = reader.decoder.seeked_to_frame(frame);
+                    match result {
+                        Ok(_) => {}
+                        Err(error) => {
+                            // The decoder failed, so clear the
+                            // in-progress seek and bail
+                            *this.pending_seek = None;
+                            return std::task::Poll::Ready(Err(error));
+                        }
+                    }
+
+                    // Update our internal position to align with the
+                    // start of the frame
+                    *reader.current_pos = frame.decompressed_pos;
+
+                    // Clear the buffer
+                    reader.buffer.clear();
+
+                    // Seek complete, so transition states to jump to
+                    // the end of the stream
+                    *this.pending_seek = Some(PendingSeek {
+                        state: PendingSeekState::JumpingToEnd { end_offset },
+                        ..pending_seek
+                    });
                 }
                 PendingSeekState::JumpingToEnd { end_offset } => {
                     // Seek target is relative to the end of the stream, so
@@ -1571,6 +1720,10 @@ struct PendingSeek {
 #[derive(Debug, Clone, Copy)]
 enum PendingSeekState {
     Starting,
+    SeekingToLastFrame {
+        end_offset: i64,
+        frame: ZstdFrame,
+    },
     JumpingToEnd {
         end_offset: i64,
     },

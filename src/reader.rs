@@ -227,6 +227,26 @@ where
                 offset
             }
             std::io::SeekFrom::End(offset) => {
+                // Seek to the last position we know about in the stream.
+                let seek = self.decoder.prepare_seek_to_last_known_pos();
+
+                if let Some(frame) = seek.seek_to_frame_start {
+                    // We need to seek to the start of a frame
+
+                    // Seek the underlying reader
+                    self.reader
+                        .seek(std::io::SeekFrom::Start(frame.compressed_pos))?;
+
+                    // Update the decoder based on what frame we're now at
+                    self.decoder.seeked_to_frame(frame)?;
+
+                    // Update our internal position to align with the start of the frame
+                    self.current_pos = frame.decompressed_pos;
+
+                    // Clear the buffer
+                    self.buffer.clear();
+                }
+
                 // Jump to the end of the stream
                 self.jump_to_end()?;
 

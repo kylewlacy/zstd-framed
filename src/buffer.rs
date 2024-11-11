@@ -32,6 +32,10 @@ pub trait Buffer {
     ///
     /// Implementations may panic if `len > self.uncommitted().len()`.
     fn commit(&mut self, len: usize);
+
+    /// Clear any uncommitted data in the buffer. This is conceptually
+    /// equivalent to committing all the uncommitted data.
+    fn clear(&mut self);
 }
 
 /// A [Buffer] that wraps some fixed-size array-like type, which uses two
@@ -95,6 +99,11 @@ where
             self.head = 0;
             self.tail = 0;
         }
+    }
+
+    fn clear(&mut self) {
+        self.head = 0;
+        self.tail = 0;
     }
 }
 

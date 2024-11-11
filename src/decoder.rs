@@ -128,6 +128,33 @@ impl<'dict> ZstdFramedDecoder<'dict> {
         }
     }
 
+    /// Determine the best way to reach the last known position within the
+    /// decompressed stream based on the current decoder state
+    pub fn prepare_seek_to_last_known_pos(&self) -> ZstdSeek {
+        // Get the last known frame
+        let last_known_frame = match self.table.last_frame() {
+            Some(frame) if frame.index > self.current_frame.index => frame,
+            _ => self.current_frame,
+        };
+
+        if last_known_frame.index == self.current_frame.index {
+            let decompress_len = last_known_frame
+                .size
+                .decompressed_size
+                .saturating_sub(self.decoded_size.decompressed_size);
+
+            ZstdSeek {
+                seek_to_frame_start: None,
+                decompress_len,
+            }
+        } else {
+            ZstdSeek {
+                seek_to_frame_start: Some(last_known_frame),
+                decompress_len: last_known_frame.size.decompressed_size,
+            }
+        }
+    }
+
     /// Indicates that the caller has seeked the underlying stream to the
     /// start of `frame`. The underlying decoder will be reset.
     pub fn seeked_to_frame(&mut self, frame: ZstdFrame) -> std::io::Result<()> {

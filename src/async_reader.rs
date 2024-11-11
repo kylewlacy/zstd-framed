@@ -4,6 +4,77 @@ use crate::{
 };
 
 pin_project_lite::pin_project! {
+    /// An reader that decompresses a zstd stream from an underlying
+    /// async reader. Works as either a `tokio` or `futures` reader if
+    /// their respective features are enabled.
+    ///
+    /// The underyling reader `R` should implement the following traits:
+    ///
+    /// - `tokio`
+    ///   - [`tokio::io::AsyncBufRead`] (required for [`tokio::io::AsyncRead`] and [`tokio::io::AsyncBufRead`] impls)
+    ///   - (Optional) [`tokio::io::AsyncSeek`] (used when calling [`.seekable()`](AsyncZstdReader::seekable))
+    /// - `futures`
+    ///   - [`futures::AsyncBufRead`] (required for [`futures::AsyncRead`] and [`futures::AsyncBufRead`] impls)
+    ///   - (Optional) [`futures::AsyncSeek`] (used when calling [`.seekable()`](AsyncZstdReader::seekable))
+    ///
+    /// For sync I/O support, see [`crate::ZstdReader`].
+    ///
+    /// ## Construction
+    ///
+    /// Create a builder using [`AsyncZstdReader::builder_tokio`] (recommended
+    /// for `tokio`) or [`AsyncZstdReader::builder_futures`] (recommended for
+    /// `futures`); or use [`ZstdReader::builder_buffered`] to use a custom
+    /// buffer for either. See [`ZstdReaderBuilder`] for build options. Call
+    /// [`AsyncZstdReaderBuilder::build`] to build the
+    /// [`AsyncZstdReader`] instance.
+    ///
+    /// ```
+    /// # #[cfg(feature = "tokio")]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let compressed_file: &[u8] = &[];
+    /// // Tokio example
+    /// let reader = zstd_framed::AsyncZstdReader::builder_tokio(compressed_file)
+    ///     // .with_seek_table(table) // Provide a seek table if available
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "tokio"))]
+    /// # fn main() { }
+    /// ```
+    ///
+    /// ```
+    /// # #[cfg(feature = "futures")]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let compressed_file: &[u8] = &[];
+    /// // futures example
+    /// let reader = zstd_framed::AsyncZstdReader::builder_futures(compressed_file)
+    ///     // .with_seek_table(table) // Provide a seek table if available
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "futures"))]
+    /// # fn main() { }
+    /// ```
+    ///
+    /// ## Buffering
+    ///
+    /// The decompressed zstd output is always buffered internally. Since the
+    /// reader must also implement [`tokio::io::AsyncBufRead`] /
+    /// [`futures::AsyncBufRead`], the compressed input must also be buffered.
+    ///
+    /// [`AsyncZstdReader::builder_tokio`] and
+    /// [`AsyncZstdReader::builder_futures`] will wrap any reader implmenting
+    /// [`tokio::io::AsyncRead`] or [`futures::AsyncRead`] (respectively)
+    /// with a recommended buffer size for the input stream. For more control
+    /// over how the input gets buffered, you can instead use
+    /// [`AsyncZstdReader::builder_buffered`].
+    ///
+    /// ## Seeking
+    ///
+    /// If the underlying reader is seekable (i.e. it implements either
+    /// [`tokio::io::AsyncSeek`] or [`futures::AsyncSeek`]), you can call
+    /// [`.seekable()`](`AsyncZstdReader::seekable`) to convert it to a seekable reader. See
+    /// [`AsyncZstdSeekableReader`] for notes and caveats about seeking.
     pub struct AsyncZstdReader<'dict, R> {
         #[pin]
         reader: R,
@@ -14,6 +85,9 @@ pin_project_lite::pin_project! {
 }
 
 impl<'dict, R> AsyncZstdReader<'dict, R> {
+    /// Create a new zstd reader that decompresses the zstd stream from
+    /// the underlying Tokio reader. The provided reader will be wrapped
+    /// with an appropriately-sized buffer.
     #[cfg(feature = "tokio")]
     pub fn builder_tokio(reader: R) -> ZstdReaderBuilder<tokio::io::BufReader<R>>
     where
@@ -22,6 +96,9 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
         ZstdReaderBuilder::new_tokio(reader)
     }
 
+    /// Create a new zstd reader that decompresses the zstd stream from
+    /// the underlying `futures` reader. The provided reader will be
+    /// wrapped with an appropriately-sized buffer.
     #[cfg(feature = "futures")]
     pub fn builder_futures(reader: R) -> ZstdReaderBuilder<futures::io::BufReader<R>>
     where
@@ -30,10 +107,18 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
         ZstdReaderBuilder::new_futures(reader)
     }
 
+    /// Create a new zstd reader that decompresses the zstd stream from
+    /// the underlying reader. The underlying reader must implement
+    /// either [`tokio::io::AsyncBufRead`] or [`futures::AsyncBufRead`],
+    /// and its buffer will be used directly. When in doubt, use
+    /// one of the other builder methods to use an appropriate buffer size
+    /// for decompressing a zstd stream.
     pub fn builder_buffered(reader: R) -> ZstdReaderBuilder<R> {
         ZstdReaderBuilder::with_buffered(reader)
     }
 
+    /// Wrap the reader with [`AsyncZstdSeekableReader`], which adds support
+    /// for seeking if the underlying reader supports seeking.
     pub fn seekable(self) -> AsyncZstdSeekableReader<'dict, R> {
         AsyncZstdSeekableReader {
             reader: self,
@@ -217,6 +302,36 @@ where
 }
 
 pin_project_lite::pin_project! {
+    /// A wrapper around [`AsyncZstdReader`] with extra support for seeking.
+    ///
+    /// The underlying reader `R` should implement the following traits:
+    ///
+    /// - `tokio`
+    ///   - [`tokio::io::AsyncBufRead`] + [`tokio::io::AsyncSeek`] (required for [`tokio::io::AsyncRead`], [`tokio::io::AsyncBufRead`], and [`tokio::io::AsyncSeek`] impls)
+    /// - `futures`
+    ///   - [`futures::AsyncBufRead`] + [`futures::AsyncSeek`] (required for [`futures::AsyncRead`], [`futures::AsyncBufRead`], and [`tokio::io::AsyncSeek`] impls)
+    ///
+    /// **By default, seeking
+    /// within the stream will linearly decompress
+    /// until reaching the target!**
+    ///
+    /// Seeking can do a lot better when the underlying stream is broken up
+    /// into multiple frames, such as a stream that uses the [zstd seekable format].
+    /// You can create such a stream using [`ZstdWriterBuilder::with_seek_table`](crate::async_writer::ZstdWriterBuilder::with_seek_table).
+    ///
+    /// There are two situations where seeking can take advantage of a seek
+    /// table:
+    ///
+    /// 1. When a seek table is provided up-front using [`ZstdReaderBuilder::with_seek_table`].
+    ///    See [`crate::table::read_seek_table`] for reading a seek table
+    ///    from a reader (there are also async-friendly functions available).
+    /// 2. When rewinding to a previously-decompressed frame. Frame offsets are
+    ///    automatically recorded during decompression.
+    ///
+    /// Even if a seek table is used, seeking will still need to rewind to
+    /// the start of a frame, then decompress until reaching the target offset.
+    ///
+    /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
     pub struct AsyncZstdSeekableReader<'dict, R> {
         #[pin]
         reader: AsyncZstdReader<'dict, R>,
@@ -1016,6 +1131,7 @@ where
     }
 }
 
+/// A builder that builds an [`AsyncZstdReader`] from the provided reader.
 pub struct ZstdReaderBuilder<R> {
     reader: R,
     table: ZstdSeekTable,
@@ -1023,7 +1139,7 @@ pub struct ZstdReaderBuilder<R> {
 
 #[cfg(feature = "tokio")]
 impl<R> ZstdReaderBuilder<tokio::io::BufReader<R>> {
-    pub fn new_tokio(reader: R) -> Self
+    fn new_tokio(reader: R) -> Self
     where
         R: tokio::io::AsyncRead,
     {
@@ -1034,7 +1150,7 @@ impl<R> ZstdReaderBuilder<tokio::io::BufReader<R>> {
 
 #[cfg(feature = "futures")]
 impl<R> ZstdReaderBuilder<futures::io::BufReader<R>> {
-    pub fn new_futures(reader: R) -> Self
+    fn new_futures(reader: R) -> Self
     where
         R: futures::AsyncRead,
     {
@@ -1045,18 +1161,26 @@ impl<R> ZstdReaderBuilder<futures::io::BufReader<R>> {
 }
 
 impl<R> ZstdReaderBuilder<R> {
-    pub fn with_buffered(reader: R) -> Self {
+    fn with_buffered(reader: R) -> Self {
         ZstdReaderBuilder {
             reader,
             table: ZstdSeekTable::empty(),
         }
     }
 
+    /// Use the given seek table when seeking the resulting reader. This can
+    /// greatly speed up seek operations when using a zstd stream that
+    /// uses the [zstd seekable format].
+    ///
+    /// See [`crate::table::read_seek_table`] for reading a seek table.
+    ///
+    /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
     pub fn with_seek_table(mut self, table: ZstdSeekTable) -> Self {
         self.table = table;
         self
     }
 
+    /// Build the reader.
     pub fn build(self) -> std::io::Result<AsyncZstdReader<'static, R>> {
         let zstd_decoder = zstd::stream::raw::Decoder::new()?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::DCtx::out_size()]);

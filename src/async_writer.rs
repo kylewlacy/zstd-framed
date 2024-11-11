@@ -1,6 +1,87 @@
 use crate::encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekTableConfig};
 
 pin_project_lite::pin_project! {
+    /// A writer that writes a compressed zstd stream to the underlying writer. Works as either a `tokio` or `futures` writer if
+    /// their respective features are enabled.
+    ///
+    /// The underlying writer `W` should implement the following traits:
+    ///
+    /// - `tokio`
+    ///   - [`tokio::io::AsyncWrite`] (required for [`tokio::io::AsyncWrite`] impl)
+    /// - `futures`
+    ///   - [`futures::AsyncWrite`] (required for [`futures::AsyncWrite`] impl)
+    ///
+    /// For sync I/O support, see [`crate::ZstdWriter`].
+    ///
+    /// ## Construction
+    ///
+    /// Create a builder using [`AsyncZstdWriter::builder`]. See [`ZstdWriterBuilder`]
+    /// for builder options. Call [`ZstdWriterBuilder::build`] to build the
+    /// [`AsyncZstdWriter`] instance.
+    ///
+    /// ```
+    /// # #[cfg(feature = "tokio")]
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use tokio::io::AsyncWriteExt as _;
+    /// # let compressed_file = vec![];
+    /// // Tokio example
+    /// let mut writer = zstd_framed::AsyncZstdWriter::builder(compressed_file)
+    ///     .with_compression_level(3) // Set custom compression level
+    ///     .with_seek_table(1024 * 1024) // Write zstd seekable format table
+    ///     .build()?;
+    ///
+    /// // ...
+    ///
+    /// writer.shutdown().await?; // Shut down the writer
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "tokio"))]
+    /// # fn main() { }
+    /// ```
+    ///
+    /// ```
+    /// # #[cfg(feature = "futures")]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use futures::io::AsyncWriteExt as _;
+    /// # futures::executor::block_on(async {
+    /// # let compressed_file = vec![];
+    /// // futures example
+    /// let mut writer = zstd_framed::AsyncZstdWriter::builder(compressed_file)
+    ///     .with_compression_level(3) // Set custom compression level
+    ///     .with_seek_table(1024 * 1024) // Write zstd seekable format table
+    ///     .build()?;
+    ///
+    /// // ...
+    ///
+    /// writer.close().await?; // Close the writer
+    /// # Ok(())
+    /// # })
+    /// # }
+    /// # #[cfg(not(feature = "futures"))]
+    /// # fn main() { }
+    /// ```
+    ///
+    /// ## Writing multiple frames
+    ///
+    /// To allow for efficient seeking (e.g. when using [`ZstdReaderBuilder::with_seek_table`](crate::async_reader::ZstdReaderBuilder::with_seek_table)),
+    /// you can write multiple zstd frames to the underlying writer. If the
+    /// [`.with_seek_table()`](ZstdWriterBuilder::with_seek_table) option is
+    /// given during construction, multiple frames will be created automatically
+    /// to fit within the given `max_frame_size`.
+    ///
+    /// Alternatively, you can use [`AsyncZstdWriter::finish_frame()`] to explicitly
+    /// split the underlying stream into multiple frames. [`.finish_frame()`](ZstdWriter::finish_frame)
+    /// can be used even when not using the [`.with_seek_table()`](ZstdWriterBuilder::with_seek_table)
+    /// option (but note the seek table will only be written when using
+    /// [`.with_seek_table()`](ZstdWriterBuilder::with_seek_table)).
+    ///
+    /// ## Clean shutdown
+    ///
+    /// To ensure the writer shuts down cleanly (including flushing any in-memory
+    /// buffers and writing the seek table if enabled with [`.with_seek_table()`](ZstdWriterBuilder::with_seek_table)),
+    /// make sure to call the Tokio [`.shutdown()`](tokio::io::AsyncWriteExt::shutdown)
+    /// method or the or futures [`.close()`](`futures::io::AsyncWriteExt::close`) method!
     pub struct AsyncZstdWriter<'dict, W> {
         #[pin]
         writer: W,
@@ -235,6 +316,7 @@ where
     }
 }
 
+/// A builder that builds an [`AsyncZstdWriter`] from the provided writer.
 pub struct ZstdWriterBuilder<W> {
     writer: W,
     compression_level: i32,
@@ -250,11 +332,23 @@ impl<W> ZstdWriterBuilder<W> {
         }
     }
 
+    /// Set the zstd compression level.
     pub fn with_compression_level(mut self, level: i32) -> Self {
         self.compression_level = level;
         self
     }
 
+    /// Write the stream using the [zstd seekable format].
+    ///
+    /// Once the current zstd frame reaches a decompressed size of
+    /// `max_frame_size`, a new frame will automatically be started. When
+    /// the writer is cleanly shut down, a final frame containing a seek
+    /// table will be written to the end of the writer. This seek table can
+    /// be used to efficiently seek through the file, such as by using
+    /// [crate::table::read_seek_table] (or async equivalent) along with
+    /// [`ZstdReaderBuilder::with_seek_table`](crate::async_reader::ZstdReaderBuilder::with_seek_table).
+    ///
+    /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
     pub fn with_seek_table(mut self, max_frame_size: u32) -> Self {
         assert!(max_frame_size > 0, "max frame size must be greater than 0");
 
@@ -262,6 +356,7 @@ impl<W> ZstdWriterBuilder<W> {
         self
     }
 
+    /// Build the writer.
     pub fn build(self) -> std::io::Result<AsyncZstdWriter<'static, W>>
     where
         W: std::io::Write,

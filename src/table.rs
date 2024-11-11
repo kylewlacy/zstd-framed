@@ -1,28 +1,60 @@
 pub mod futures;
 pub mod tokio;
 
+/// A table containing offsets and sizes for the frames within a zstd stream,
+/// such as from the [zstd seekable format].
+///
+/// ## Reading
+///
+/// If a zstd stream uses the [zstd seekable format], you can parse its
+/// seek table using the [`read_seek_table`] function (or one of its async
+/// variants).
+///
+/// ## Usage
+///
+/// [`ZstdReader`](crate::ZstdReader) can use a seek table to speed up
+/// seeks through the stream. To do so, pass the stream's seek table using
+/// the [`.with_seek_table()`](crate::reader::ZstdReaderBuilder::with_seek_table)
+/// builder option. When using [`AsyncZstdReader`](crate::AsyncZstdReader),
+/// you need to use both the `.with_seek_table()` builder option and the
+/// [`.seekable()`](crate::AsyncZstdReader::seekable) wrapper method.
+///
+/// ## Writing
+///
+/// [`ZstdWriter`](crate::ZstdWriter) can write a seek table by enabling the
+/// [`.with_seek_table()`](crate::writer::ZstdWriterBuilder::with_seek_table)
+/// builder option. The same applies when using [`AsyncZstdWriter`](crate::AsyncZstdWriter).
+///
+/// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 #[derive(Debug)]
 pub struct ZstdSeekTable {
     frames: Vec<ZstdFrame>,
 }
 
 impl ZstdSeekTable {
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self { frames: vec![] }
     }
 
+    /// Returns the total number of zstd frames in the table.
     pub fn num_frames(&self) -> usize {
         self.frames.len()
     }
 
+    /// Returns an iterator over each of the frames in the table. Frames
+    /// are ordered from the start of the zstd stream to the end.
     pub fn frames(&self) -> impl Iterator<Item = ZstdFrame> + '_ {
         self.frames.iter().copied()
     }
 
+    /// Returns the first zstd frame in the table, or `None` if the table
+    /// is empty.
     pub(crate) fn first_frame(&self) -> Option<ZstdFrame> {
         self.frames.first().copied()
     }
 
+    /// Returns the last zstd frame in the table, or `None` if the table
+    /// is empty.
     pub(crate) fn last_frame(&self) -> Option<ZstdFrame> {
         self.frames.last().copied()
     }
@@ -61,6 +93,9 @@ impl ZstdSeekTable {
     }
 }
 
+/// Represents a single frame within a zstd stream, including the compressed
+/// and decompressed offsets within the stream, and the compressed and
+/// decompressed sizes of the frame.
 #[derive(Debug, Clone, Copy)]
 pub struct ZstdFrame {
     pub(crate) index: usize,
@@ -78,18 +113,24 @@ impl ZstdFrame {
         self.decompressed_pos + self.size.decompressed_size
     }
 
+    /// Get the compressed size of the frame, measured in bytes.
     pub fn compressed_size(&self) -> u64 {
         self.size.compressed_size
     }
 
+    /// Get the size of the frame if it were decompressed, measured in bytes.
     pub fn decompressed_size(&self) -> u64 {
         self.size.decompressed_size
     }
 
+    /// Get the range of positions that cover the range of this frame
+    /// within the compressed zstd stream.
     pub fn compressed_range(&self) -> std::ops::Range<u64> {
         self.compressed_pos..self.compressed_end()
     }
 
+    /// Get the range of positions that this frame would include if the
+    /// zstd stream were decompressed.
     pub fn decompressed_range(&self) -> std::ops::Range<u64> {
         self.decompressed_pos..self.decompressed_end()
     }
@@ -124,6 +165,28 @@ impl ZstdFrameSize {
     }
 }
 
+/// Read the seek table from the end of a [zstd seekable format] stream.
+///
+/// Async implementations:
+///
+/// - `tokio`: [`crate::table::tokio::read_seek_table`]
+/// - `futures`: [`crate::table::futures::read_seek_table`]
+///
+/// After calling this function, **the reader will be at an unspecified
+/// position**. Consider seeking the reader back to the start after this
+/// function returns.
+///
+/// Returns `Ok(None)` if the stream doesn't apper to contain a seek table.
+/// Otherwise, returns `Err(_)` if the seek table could not be parsed or
+/// if an I/O error occurred while trying to read the seek table.
+///
+/// The seek table is returned as-is from the underlying reader. No attempt
+/// is made to validate that the seek table lines up with the underlying
+/// zstd stream. This means a malformed seek table could have out-of-bounds
+/// offsets, could omit sections of the underyling stream, or could be
+/// misaligned from frames of the underlying stream.
+///
+/// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub fn read_seek_table<R>(reader: &mut R) -> std::io::Result<Option<ZstdSeekTable>>
 where
     R: std::io::Read + std::io::Seek,

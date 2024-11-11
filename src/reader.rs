@@ -2,6 +2,66 @@ use std::io::BufRead as _;
 
 use crate::{buffer::Buffer, decoder::ZstdFramedDecoder, table::ZstdSeekTable};
 
+/// A reader that decompresses a zstd stream from an underlying reader.
+///
+/// The underyling reader `R` should implement the following traits:
+///
+/// - [`std::io::BufRead`] (required for [`std::io::Read`] and [`std::io::BufRead`] impls)
+/// - (Optional) [`std::io::Seek`] (required for [`std::io::Seek`] impl)
+///
+/// For async support, see [`crate::AsyncZstdReader`].
+///
+/// ## Construction
+///
+/// Create a builder using either [`ZstdReader::builder`] (recommended) or
+/// [`ZstdReader::builder_buffered`] (to use a custom buffer).
+/// See [`ZstdReaderBuilder`] for build options. Call
+/// [`ZstdReaderBuilder::build`] to build the [`ZstdReader`] instance.
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let compressed_file: &[u8] = &[];
+/// let reader = zstd_framed::ZstdReader::builder(compressed_file)
+///     // .with_seek_table(table) // Provide a seek table if available
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Buffering
+///
+/// The decompressed zstd output is always buffered internally. Since the
+/// reader must also implement [`std::io::BufRead`], the compressed input
+/// must also be buffered.
+///
+/// [`ZstdReader::builder`] will wrap any reader implmenting [`std::io::Read`]
+/// with a recommended buffer size for the input stream. For more control
+/// over how the input gets buffered, you can instead use
+/// [`ZstdReader::builder_buffered`].
+///
+/// ## Seeking
+///
+/// [`ZstdReader`] implements [`std::io::Seek`] as long as the underlying
+/// reader implements [`std::io::Seek`]. **By default, seeking within the
+/// stream will linearly decompress until reaching the target!**
+///
+/// Seeking can do a lot better when the underlying stream is broken up
+/// into multiple frames, such as a stream that uses the [zstd seekable format].
+/// You can create such a stream using [`ZstdWriterBuilder::with_seek_table`](crate::writer::ZstdWriterBuilder::with_seek_table).
+///
+/// There are two situations where seeking can take advantage of a seek
+/// table:
+///
+/// 1. When a seek table is provided up-front using [`ZstdReaderBuilder::with_seek_table`].
+///    See [`crate::table::read_seek_table`] for reading a seek table
+///    from a reader.
+/// 2. When rewinding to a previously-decompressed frame. Frame offsets are
+///    automatically recorded during decompression.
+///
+/// Even if a seek table is used, seeking will still need to rewind to
+/// the start of a frame, then decompress until reaching the target offset.
+///
+/// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub struct ZstdReader<'dict, R> {
     reader: R,
     decoder: ZstdFramedDecoder<'dict>,
@@ -10,6 +70,9 @@ pub struct ZstdReader<'dict, R> {
 }
 
 impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
+    /// Create a new zstd reader that decompresses the zstd stream from
+    /// the underlying reader. The provided reader will be wrapped with
+    /// an appropriately-sized buffer.
     pub fn builder(reader: R) -> ZstdReaderBuilder<std::io::BufReader<R>>
     where
         R: std::io::Read,
@@ -17,6 +80,11 @@ impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
         ZstdReaderBuilder::new(reader)
     }
 
+    /// Create a new zstd reader that decompresses the zstd stream from
+    /// the underlying reader. The underlying reader must implement
+    /// [`std::io::BufRead`], and its buffer will be used directly. When in
+    /// doubt, use [`ZstdReader::builder`], which uses an appropriate
+    /// buffer size for decompressing a zstd stream.
     pub fn builder_buffered(reader: R) -> ZstdReaderBuilder<R> {
         ZstdReaderBuilder::with_buffered(reader)
     }
@@ -150,6 +218,7 @@ where
     }
 }
 
+/// A builder that builds a [`ZstdReader`] from the provided reader.
 pub struct ZstdReaderBuilder<R> {
     reader: R,
     table: ZstdSeekTable,
@@ -166,18 +235,26 @@ impl<R> ZstdReaderBuilder<std::io::BufReader<R>> {
 }
 
 impl<R> ZstdReaderBuilder<R> {
-    pub fn with_buffered(reader: R) -> Self {
+    fn with_buffered(reader: R) -> Self {
         ZstdReaderBuilder {
             reader,
             table: ZstdSeekTable::empty(),
         }
     }
 
+    /// Use the given seek table when seeking the resulting reader. This can
+    /// greatly speed up seek operations when using a zstd stream that
+    /// uses the [zstd seekable format].
+    ///
+    /// See [`crate::table::read_seek_table`] for reading a seek table.
+    ///
+    /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
     pub fn with_seek_table(mut self, table: ZstdSeekTable) -> Self {
         self.table = table;
         self
     }
 
+    /// Build the reader.
     pub fn build(self) -> std::io::Result<ZstdReader<'static, R>> {
         let zstd_decoder = zstd::stream::raw::Decoder::new()?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::DCtx::out_size()]);

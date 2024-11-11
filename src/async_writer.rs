@@ -411,10 +411,7 @@ impl<W> ZstdWriterBuilder<W> {
     }
 
     /// Build the writer.
-    pub fn build(self) -> std::io::Result<AsyncZstdWriter<'static, W>>
-    where
-        W: std::io::Write,
-    {
+    pub fn build(self) -> std::io::Result<AsyncZstdWriter<'static, W>> {
         let zstd_encoder = zstd::stream::raw::Encoder::new(self.compression_level)?;
         let buffer = crate::buffer::FixedBuffer::new(vec![0; zstd::zstd_safe::CCtx::out_size()]);
         let encoder = ZstdFramedEncoder::new(zstd_encoder, self.seek_table_config);

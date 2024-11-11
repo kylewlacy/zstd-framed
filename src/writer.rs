@@ -1,5 +1,3 @@
-use std::io::Write as _;
-
 use crate::{
     buffer::Buffer as _,
     encoder::{ZstdFramedEncoder, ZstdFramedEncoderSeekTableConfig},
@@ -106,6 +104,10 @@ where
             }
         }
 
+        self.flush_uncommitted()?;
+
+        self.writer.flush()?;
+
         Ok(())
     }
 
@@ -162,6 +164,8 @@ where
             }
         }
 
+        self.flush_uncommitted()?;
+
         self.writer.flush()
     }
 }
@@ -171,7 +175,7 @@ where
     W: std::io::Write,
 {
     fn drop(&mut self) {
-        let _ = self.shutdown().and_then(|_| self.flush());
+        let _ = self.shutdown();
     }
 }
 

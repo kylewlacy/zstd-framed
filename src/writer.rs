@@ -63,7 +63,7 @@ where
     buffer: crate::buffer::FixedBuffer<Vec<u8>>,
 }
 
-impl<'dict, W> ZstdWriter<'dict, W>
+impl<W> ZstdWriter<'_, W>
 where
     W: std::io::Write,
 {
@@ -146,7 +146,7 @@ where
     }
 }
 
-impl<'dict, W> std::io::Write for ZstdWriter<'dict, W>
+impl<W> std::io::Write for ZstdWriter<'_, W>
 where
     W: std::io::Write,
 {
@@ -197,7 +197,7 @@ where
     }
 }
 
-impl<'dict, W> Drop for ZstdWriter<'dict, W>
+impl<W> Drop for ZstdWriter<'_, W>
 where
     W: std::io::Write,
 {

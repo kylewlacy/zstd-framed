@@ -90,7 +90,7 @@ pin_project_lite::pin_project! {
     }
 }
 
-impl<'dict, W> AsyncZstdWriter<'dict, W> {
+impl<W> AsyncZstdWriter<'_, W> {
     pub fn builder(writer: W) -> ZstdWriterBuilder<W> {
         ZstdWriterBuilder::new(writer)
     }
@@ -179,7 +179,7 @@ impl<'dict, W> AsyncZstdWriter<'dict, W> {
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, W> tokio::io::AsyncWrite for AsyncZstdWriter<'dict, W>
+impl<W> tokio::io::AsyncWrite for AsyncZstdWriter<'_, W>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -275,7 +275,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, W> futures::AsyncWrite for AsyncZstdWriter<'dict, W>
+impl<W> futures::AsyncWrite for AsyncZstdWriter<'_, W>
 where
     W: futures::AsyncWrite + Unpin,
 {

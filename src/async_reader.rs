@@ -186,7 +186,7 @@ impl<'dict, R> AsyncZstdReader<'dict, R> {
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, R> tokio::io::AsyncBufRead for AsyncZstdReader<'dict, R>
+impl<R> tokio::io::AsyncBufRead for AsyncZstdReader<'_, R>
 where
     R: tokio::io::AsyncBufRead,
 {
@@ -240,7 +240,7 @@ where
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, R> tokio::io::AsyncRead for AsyncZstdReader<'dict, R>
+impl<R> tokio::io::AsyncRead for AsyncZstdReader<'_, R>
 where
     R: tokio::io::AsyncBufRead,
 {
@@ -268,7 +268,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, R> futures::AsyncBufRead for AsyncZstdReader<'dict, R>
+impl<R> futures::AsyncBufRead for AsyncZstdReader<'_, R>
 where
     R: futures::io::AsyncBufRead,
 {
@@ -322,7 +322,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, R> futures::AsyncRead for AsyncZstdReader<'dict, R>
+impl<R> futures::AsyncRead for AsyncZstdReader<'_, R>
 where
     R: futures::AsyncBufRead,
 {
@@ -392,7 +392,7 @@ pin_project_lite::pin_project! {
     }
 }
 
-impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
+impl<R> AsyncZstdSeekableReader<'_, R> {
     /// If a seek operation was started with [`tokio::io::AsyncSeek::start_seek`]
     /// but wasn't polled to completion, "undo" the seek by seeking
     /// back to where we were in the zstd stream.
@@ -780,7 +780,7 @@ impl<'dict, R> AsyncZstdSeekableReader<'dict, R> {
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, R> tokio::io::AsyncBufRead for AsyncZstdSeekableReader<'dict, R>
+impl<R> tokio::io::AsyncBufRead for AsyncZstdSeekableReader<'_, R>
 where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
@@ -812,7 +812,7 @@ where
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, R> tokio::io::AsyncRead for AsyncZstdSeekableReader<'dict, R>
+impl<R> tokio::io::AsyncRead for AsyncZstdSeekableReader<'_, R>
 where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
@@ -840,7 +840,7 @@ where
 }
 
 #[cfg(feature = "tokio")]
-impl<'dict, R> tokio::io::AsyncSeek for AsyncZstdSeekableReader<'dict, R>
+impl<R> tokio::io::AsyncSeek for AsyncZstdSeekableReader<'_, R>
 where
     R: tokio::io::AsyncBufRead + tokio::io::AsyncSeek,
 {
@@ -1228,7 +1228,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, R> futures::AsyncBufRead for AsyncZstdSeekableReader<'dict, R>
+impl<R> futures::AsyncBufRead for AsyncZstdSeekableReader<'_, R>
 where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {
@@ -1260,7 +1260,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, R> futures::AsyncRead for AsyncZstdSeekableReader<'dict, R>
+impl<R> futures::AsyncRead for AsyncZstdSeekableReader<'_, R>
 where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {
@@ -1288,7 +1288,7 @@ where
 }
 
 #[cfg(feature = "futures")]
-impl<'dict, R> futures::AsyncSeek for AsyncZstdSeekableReader<'dict, R>
+impl<R> futures::AsyncSeek for AsyncZstdSeekableReader<'_, R>
 where
     R: futures::AsyncBufRead + futures::AsyncSeek,
 {

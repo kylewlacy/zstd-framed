@@ -69,7 +69,7 @@ pub struct ZstdReader<'dict, R> {
     current_pos: u64,
 }
 
-impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
+impl<R> ZstdReader<'_, std::io::BufReader<R>> {
     /// Create a new zstd reader that decompresses the zstd stream from
     /// the underlying reader. The provided reader will be wrapped with
     /// an appropriately-sized buffer.
@@ -90,7 +90,7 @@ impl<'dict, R> ZstdReader<'dict, std::io::BufReader<R>> {
     }
 }
 
-impl<'dict, R> ZstdReader<'dict, R> {
+impl<R> ZstdReader<'_, R> {
     /// Jump forward, decoding and consuming `length` decompressed bytes
     /// from the zstd stream.
     fn jump_forward(&mut self, mut length: u64) -> std::io::Result<()>
@@ -148,7 +148,7 @@ impl<'dict, R> ZstdReader<'dict, R> {
     }
 }
 
-impl<'dict, R> std::io::Read for ZstdReader<'dict, R>
+impl<R> std::io::Read for ZstdReader<'_, R>
 where
     R: std::io::BufRead,
 {
@@ -173,7 +173,7 @@ where
     }
 }
 
-impl<'dict, R> std::io::BufRead for ZstdReader<'dict, R>
+impl<R> std::io::BufRead for ZstdReader<'_, R>
 where
     R: std::io::BufRead,
 {
@@ -215,7 +215,7 @@ where
     }
 }
 
-impl<'dict, R> std::io::Seek for ZstdReader<'dict, R>
+impl<R> std::io::Seek for ZstdReader<'_, R>
 where
     R: std::io::BufRead + std::io::Seek,
 {

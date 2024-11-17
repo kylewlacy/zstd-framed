@@ -1,0 +1,42 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  schedule:
+    - cron: '50 0 * * FRI' # Every Friday at 00:50 UTC (4:50pm Pacific)
+jobs:
+  run-tests:
+    name: Run tests (Rust ${{ matrix.rust }}, ${{ matrix.feature-flags }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - "1.81"
+          - stable
+          - beta
+          - nightly
+        feature-flags:
+          - "--no-default-features"
+          - "" # Default features
+          - "--all-features"
+          - "--features tokio"
+          - "--features futures"
+          - "--features tokio,futures"
+    env:
+      RUST_TOOLCHAIN: ${{ matrix.rust }}
+      FEATURE_FLAGS: ${{ matrix.feature-flags }}
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+    - name: Install Rust toolchain (${{ matrix.rust }})
+      run: rustup install "$RUST_TOOLCHAIN" --profile default
+    - name: Check formatting
+      run: rustup run "$RUST_TOOLCHAIN" cargo fmt -- --check
+    - name: Build
+      run: rustup run "$RUST_TOOLCHAIN" cargo build --verbose $FEATURE_FLAGS
+    - name: Run tests
+      run: rustup run "$RUST_TOOLCHAIN" cargo test $FEATURE_FLAGS
+    - name: Run Clippy
+      run: rustup run "$RUST_TOOLCHAIN" cargo clippy $FEATURE_FLAGS -- -Dwarnings

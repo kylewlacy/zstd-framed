@@ -6,11 +6,6 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
 /// Read the seek table from the end of a [zstd seekable format] stream.
 ///
-/// Other implementations:
-///
-/// - sync I/O: [`crate::table::read_seek_table`]
-/// - `futures`: [`crate::table::futures::read_seek_table`]`
-///
 /// Returns `Ok(None)` if the stream doesn't apper to contain a seek table.
 /// Otherwise, returns `Err(_)` if the seek table could not be parsed or
 /// if an I/O error occurred while trying to read the seek table. If it
@@ -22,6 +17,11 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 /// zstd stream. This means a malformed seek table could have out-of-bounds
 /// offsets, could omit sections of the underyling stream, or could be
 /// misaligned from frames of the underlying stream.
+///
+/// Other implementations:
+///
+/// - sync I/O: [`crate::table::read_seek_table`]
+/// - `futures`: [`crate::table::futures::read_seek_table`]`
 ///
 /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub async fn read_seek_table<R>(mut reader: R) -> std::io::Result<Option<ZstdSeekTable>>

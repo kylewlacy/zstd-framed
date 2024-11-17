@@ -1,5 +1,6 @@
 //! Seekable reader types and writer types for use with zstd-compressed
-//! streams made up of multiple frames, especially those that use the [zstd seekable format]. Works with both sync I/O and async I/O via the `tokio` and `futures` features.
+//! streams made up of multiple frames, especially those that use the [zstd seekable format].
+//! Works with sync I/O, and async I/O via the `tokio` and `futures` features.
 //!
 //! By compressing a file into multiple frames, we can handle seeking
 //! relatively efficiently: we first jump to the start of the last frame
@@ -22,7 +23,7 @@
 //!
 //! For more general use, consider one of these alternative crates:
 //!
-//! - [`zstd`] for zstd compression and decompression (with synchronous I/O)
+//! - [`zstd`](https://crates.io/crates/zstd) for zstd compression and decompression (with synchronous I/O)
 //! - [`async-compression`](https://crates.io/crates/async-compression) for
 //!   compression and decompression with zstd and many other algorithms (with
 //!   asynchronous I/O)

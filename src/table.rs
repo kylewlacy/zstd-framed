@@ -167,11 +167,6 @@ impl ZstdFrameSize {
 
 /// Read the seek table from the end of a [zstd seekable format] stream.
 ///
-/// Async implementations:
-///
-/// - `tokio`: [`crate::table::tokio::read_seek_table`]
-/// - `futures`: [`crate::table::futures::read_seek_table`]
-///
 /// Returns `Ok(None)` if the stream doesn't apper to contain a seek table.
 /// Otherwise, returns `Err(_)` if the seek table could not be parsed or
 /// if an I/O error occurred while trying to read the seek table. If it
@@ -183,6 +178,11 @@ impl ZstdFrameSize {
 /// zstd stream. This means a malformed seek table could have out-of-bounds
 /// offsets, could omit sections of the underyling stream, or could be
 /// misaligned from frames of the underlying stream.
+///
+/// Async implementations:
+///
+/// - `tokio`: [`crate::table::tokio::read_seek_table`]
+/// - `futures`: [`crate::table::futures::read_seek_table`]
 ///
 /// [zstd seekable format]: https://github.com/facebook/zstd/tree/51eb7daf39c8e8a7c338ba214a9d4e2a6a086826/contrib/seekable_format
 pub fn read_seek_table<R>(reader: &mut R) -> std::io::Result<Option<ZstdSeekTable>>

@@ -355,6 +355,7 @@ where
 
 pin_project_lite::pin_project! {
     /// A wrapper around [`AsyncZstdReader`] with extra support for seeking.
+    /// Created via the method [`AsyncZstdReader::seekable`].
     ///
     /// The underlying reader `R` should implement the following traits:
     ///

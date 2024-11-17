@@ -6,10 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [v0.1.1] - 2024-11-17
+
+### Changed
+- Minor tweak to set missing crate metadata in `Cargo.toml`
+
 ## [v0.1.0] - 2024-11-17
 
 ### Added
 - Initial release!
 
-[Unreleased]: https://github.com/kylewlacy/zstd-framed/compare/v0.1.0...main
+[Unreleased]: https://github.com/kylewlacy/zstd-framed/compare/v0.1.1...main
+[v0.1.1]: https://github.com/kylewlacy/zstd-framed/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/kylewlacy/zstd-framed/releases/tag/v0.1.0

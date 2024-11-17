@@ -2,6 +2,7 @@
 name = "zstd-framed"
 version = "0.1.0"
 description = "zstd seekable format compression and decompression. Supports sync and async I/O"
+repository = "https://github.com/kylewlacy/zstd-framed"
 authors = ["Kyle Lacy <rust@kyle.space>"]
 categories = ["compression", "asynchronous"]
 keywords = ["zstd", "zstandard", "seekable"]

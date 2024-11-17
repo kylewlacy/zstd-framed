@@ -1,6 +1,12 @@
 [package]
 name = "zstd-framed"
 version = "0.1.0"
+description = "zstd seekable format compression and decompression. Supports sync and async I/O"
+authors = ["Kyle Lacy <rust@kyle.space>"]
+categories = ["compression", "asynchronous"]
+keywords = ["zstd", "zstandard", "seekable"]
+readme = "README.md"
+license = "MIT OR Unlicense"
 edition = "2021"
 rust-version = "1.81"
 
